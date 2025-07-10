@@ -71,7 +71,7 @@ def generate_docx_report(
             "Note: CLL expressing the IGHV 3-21 variable region gene segment "
             "have a poorer prognosis regardless of IGHV mutation status."
         )
-        prognosis_single_line = "BAD"
+        prognosis_single_line = prognosis_text
     else:
         if mutation_percent < 2.0:
             prognosis_text = "BAD"
