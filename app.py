@@ -162,6 +162,9 @@ def generate_docx_report(
 st.set_page_config(page_title="IGHV Report Generator", layout="centered")
 st.title("IGHV Report Generator")
 
+# ADD YOUR TAGLINE BELOW THE TITLE
+st.caption("*A Wobble Base Bioresearch proprietary software*")
+
 st.write("Please upload:")
 pdf_file = st.file_uploader("PDF file (IgBLAST results)", type="pdf")
 docx_template_file = st.file_uploader("Word Template (.docx)", type="docx")
