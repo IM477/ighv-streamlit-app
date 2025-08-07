@@ -10,44 +10,45 @@ from Bio import pairwise2
 # UGENE-style Consensus Logic
 # ------------------------
 
-def reverse_complement(seq):
-    complement = str.maketrans("ACGTacgt", "TGCAtgca")
-    return seq.translate(complement)[::-1]
+def reverse(seq):
+    return seq[::-1]
 
-def ugene_style_consensus(forward, reverse):
-    s1 = forward.strip().replace("\n", "").upper()
-    s2 = reverse.strip().replace("\n", "").upper()
-    s2_rev = s2[::-1]
+def complement(seq):
+    return seq.translate(str.maketrans("ACGTacgt", "TGCAtgca"))
+
+def reverse_complement(seq):
+    return complement(reverse(seq))
+
+def ugene_style_consensus(s1, s2):
+    s1 = s1.strip().replace("\n", "").upper()
+    s2 = s2.strip().replace("\n", "").upper()
+
+    s2_rev = reverse(s2)
     s3 = reverse_complement(s2)
 
     alignments = pairwise2.align.localms(s1, s3, 2, -1, -5, -0.5)
     if not alignments:
-        return None, s1, s2, s2_rev, s3, ""
+        return None, s1, s2, s2_rev, s3, "", ""
 
     best = alignments[0]
     aligned_s1, aligned_s3, score, start, end = best
 
-    consensus = []
-    for b1, b3 in zip(aligned_s1, aligned_s3):
-        if b1 == b3 and b1 != "-":
-            consensus.append(b1.upper())
-        elif b3 == "-":
-            consensus.append(b1.lower())
-        elif b1 == "-":
-            consensus.append(b3.lower())
-        else:
-            consensus.append(b1.lower())  # mismatch
+    a2 = ""
+    match_start_s1 = start
+    match_end_s1 = end
 
-    a1 = s1[:start].lower()
-    a2 = "".join(consensus)
-    a3_raw = s3[end:]
-    a3 = reverse_complement(a3_raw).lower()  # convert to s2 orientation
+    # Extract a1 and a2 from s1
+    a1 = s1[:match_start_s1].lower()
+    a2 = s1[match_start_s1:match_end_s1].upper()
 
-    if not a2.strip():
-        return "NO_MATCH", s1, s2, s2_rev, s3, ""
+    # Extract a3 from s3 that wasn't used in alignment (tail of s3)
+    s3_aligned_len = len(s3)
+    aligned_s3_segment = s3[match_start_s1:match_end_s1]
+    s3_suffix_unaligned = s3[match_end_s1:]
+    a3 = reverse_complement(s3_suffix_unaligned).lower()
 
     s4 = a1 + a2 + a3
-    return s4, s1, s2, s2_rev, s3, a2
+    return s4, s1, s2, s2_rev, s3, a2, a3
 
 def parse_fasta(text):
     seqs = {}
@@ -190,32 +191,33 @@ if cap3_input_file:
     reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
 
     if forward and reverse:
-        result, s1, s2, s2_rev, s3, match = ugene_style_consensus(forward, reverse)
+        consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse)
 
-        st.subheader("Inputs & Intermediate Steps")
-        st.code(f"Forward Read (s1):\n{s1}", language="text")
-        st.code(f"Reverse Read (s2):\n{s2}", language="text")
-        st.code(f"Reverse of s2:\n{s2_rev}", language="text")
-        st.code(f"Reverse Complement of s2 (s3):\n{s3}", language="text")
+        st.subheader("Inputs and Intermediates")
+        st.text_area("Forward Read (s1)", s1, height=100)
+        st.text_area("Reverse Read (s2)", s2, height=100)
+        st.text_area("Reverse of Reverse Read (s2 reversed)", s2_rev, height=100)
+        st.text_area("Reverse Complement of s2 (s3)", s3, height=100)
+        st.text_area("Matching Region (a2)", a2 or "No match found", height=50)
 
-        if result == "NO_MATCH":
-            st.error("⚠️ No matching region found. Manual intervention needed.")
-        else:
-            st.code(f"Matching Region (uppercase in output):\n{match}", language="text")
+        if consensus:
             st.success("UGENE-style Consensus Generated")
-            st.code(result, language="text")
+            st.code(consensus, language="text")
 
+            consensus_bytes = BytesIO(consensus.encode("utf-8"))
             st.download_button(
                 label="Download Consensus (.txt)",
-                data=BytesIO(result.encode("utf-8")),
+                data=consensus_bytes,
                 file_name="consensus_output.txt",
                 mime="text/plain"
             )
+        else:
+            st.warning("No overlap found. Manual intervention needed.")
     else:
         st.error("Could not find both _F and _R sequences in file.")
 
 # ------------------------
-# SECTION 2: IGHV Report Generator
+# SECTION 2: IGHV Report Generator (Unchanged)
 # ------------------------
 st.header("2. IGHV DOCX Report Generator")
 
