@@ -3,28 +3,35 @@ from io import BytesIO
 from docx import Document
 import PyPDF2
 import re
+import subprocess
+import tempfile
 from datetime import datetime
 
 # ------------------------
-# Custom consensus logic
+# CAP3 Wrapper
 # ------------------------
-def reverse_complement(seq):
-    complement = str.maketrans("ATCGatcg", "TAGCtagc")
-    return seq.translate(complement)[::-1]
+def run_cap3_and_get_consensus(fasta_content):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fasta_path = f"{tmpdir}/input.fasta"
+        with open(fasta_path, "w") as f:
+            f.write(fasta_content)
 
-def find_max_overlap(fwd, rev_rc, min_overlap=10):
-    max_len = min(len(fwd), len(rev_rc))
-    for i in range(max_len, min_overlap - 1, -1):
-        if fwd.endswith(rev_rc[:i]):
-            return i
-    return 0
+        cap3_cmd = ["cap3", fasta_path]
+        result = subprocess.run(cap3_cmd, capture_output=True, text=True)
 
-def generate_consensus(forward_seq, reverse_seq):
-    reverse_rc = reverse_complement(reverse_seq)
-    overlap = find_max_overlap(forward_seq, reverse_rc)
-    consensus = reverse_rc[: -overlap] + forward_seq if overlap > 0 else reverse_rc + forward_seq
-    return consensus
+        if result.returncode != 0:
+            return None, result.stderr
 
+        output_path = fasta_path + ".cap.contigs"
+        try:
+            with open(output_path, "r") as f:
+                return f.read(), None
+        except FileNotFoundError:
+            return None, "CAP3 did not produce a contigs file."
+
+# ------------------------
+# FASTA Parser
+# ------------------------
 def parse_fasta(txt):
     seqs = {}
     label = None
@@ -34,7 +41,7 @@ def parse_fasta(txt):
             label = line[1:]
             seqs[label] = ""
         elif label:
-            seqs[label] += line.upper()
+            seqs[label] += line.strip()
     return seqs
 
 # ------------------------
@@ -151,38 +158,33 @@ def generate_docx_report(
 # ------------------------
 st.set_page_config(page_title="IGHV Report Generator", layout="centered")
 st.title("IGHV Report Generator")
-st.caption("*A Wobble Base Bioresearch proprietary software*")
+st.caption("*Wobble Base Bioresearch proprietary software*")
 
 # ------------------------
-# SECTION 1: Consensus Generator
+# SECTION 1: Consensus using CAP3
 # ------------------------
-st.header("1. Consensus Sequence Generator")
+st.header("1. Consensus Sequence Generator (CAP3)")
 cap3_input_file = st.file_uploader("Upload FASTA File with Forward (_F) and Reverse (_R) Reads", type=["txt", "fasta"])
 
 if cap3_input_file:
-    content = cap3_input_file.read().decode("utf-8")
-    seqs = parse_fasta(content)
-    forward = next((v for k, v in seqs.items() if k.endswith("_F")), None)
-    reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
+    fasta_text = cap3_input_file.read().decode("utf-8")
+    consensus, error = run_cap3_and_get_consensus(fasta_text)
 
-    if forward and reverse:
-        consensus = generate_consensus(forward, reverse)
-        st.success("Consensus Generated")
+    if consensus:
+        st.success("CAP3 Consensus Generated")
         st.code(consensus, language="text")
 
-        # Download button
-        consensus_bytes = BytesIO(consensus.encode("utf-8"))
         st.download_button(
             label="Download Consensus (.txt)",
-            data=consensus_bytes,
+            data=consensus,
             file_name="consensus_output.txt",
             mime="text/plain"
         )
     else:
-        st.error("Could not find both _F and _R sequences in file.")
+        st.error(f"CAP3 failed: {error}")
 
 # ------------------------
-# SECTION 2: IGHV Report Generator
+# SECTION 2: IGHV DOCX Report Generator
 # ------------------------
 st.header("2. IGHV DOCX Report Generator")
 
