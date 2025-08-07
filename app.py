@@ -188,10 +188,10 @@ if cap3_input_file:
     content = cap3_input_file.read().decode("utf-8")
     sequences = parse_fasta(content)
     forward = next((v for k, v in sequences.items() if k.endswith("_F")), None)
-    reverse = next((v for k, v in sequences.items() if k.endswith("_R")), None)
+    reverse_seq = next((v for k, v in sequences.items() if k.endswith("_R")), None)
 
-    if forward and reverse:
-        consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse, tolerance=tolerance_limit)
+    if forward and reverse_seq:
+        consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse_seq, tolerance=tolerance_limit)
 
         st.subheader("Inputs and Intermediates")
         st.text_area("Forward Read (s1)", s1, height=100)
