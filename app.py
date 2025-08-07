@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 
 # ------------------------
-# UGENE-style Consensus Logic
+# UGENE-style Consensus Logic with Tolerance
 # ------------------------
 
 def reverse(seq):
@@ -18,29 +18,32 @@ def complement(seq):
 def reverse_complement(seq):
     return complement(reverse(seq))
 
-def find_overlap_prefix_suffix(s1, s3):
-    """Return longest overlap where s1 starts with a suffix of s3"""
+def find_overlap_prefix_suffix(s1, s3, tolerance):
+    """Return longest approximate match with up to `tolerance` mismatches"""
     max_len = min(len(s1), len(s3))
     for i in range(max_len, 0, -1):
-        if s1.startswith(s3[-i:]):
-            return s3[-i:], i
+        suffix = s3[-i:]
+        prefix = s1[:i]
+        mismatches = sum(1 for a, b in zip(prefix, suffix) if a != b)
+        if mismatches <= tolerance:
+            return suffix, i
     return "", 0
 
-def ugene_style_consensus(s1, s2):
+def ugene_style_consensus(s1, s2, tolerance=0):
     s1 = s1.strip().replace("\n", "").upper()
     s2 = s2.strip().replace("\n", "").upper()
 
     s2_rev = reverse(s2)
     s3 = reverse_complement(s2)
 
-    matching_str, match_len = find_overlap_prefix_suffix(s1, s3)
+    matching_str, match_len = find_overlap_prefix_suffix(s1, s3, tolerance)
 
     if match_len == 0:
         return None, s1, s2, s2_rev, s3, "", ""
 
     a1 = s1[match_len:].lower()
     a2 = matching_str.upper()
-    unmatched_s3 = s3[:-match_len]  # the part of s3 not included in match
+    unmatched_s3 = s3[:-match_len]
     a3 = reverse_complement(unmatched_s3).lower()
 
     consensus = a1 + a2 + a3
@@ -61,6 +64,7 @@ def parse_fasta(text):
 # ------------------------
 # IGHV PDF extraction
 # ------------------------
+
 def extract_from_pdf(pdf_bytes):
     pdf_reader = PyPDF2.PdfReader(BytesIO(pdf_bytes))
     text = "".join(page.extract_text() or "" for page in pdf_reader.pages)
@@ -95,6 +99,7 @@ def extract_from_pdf(pdf_bytes):
 # ------------------------
 # DOCX Report Generator
 # ------------------------
+
 def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, template_bytes, sample_id_text):
     gene_name_str = ", ".join(str(g).strip() for g in gene_names_list)
     percent_identity = float(percent_identity_str.strip('%'))
@@ -164,6 +169,7 @@ def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, templ
 # ------------------------
 # STREAMLIT APP
 # ------------------------
+
 st.set_page_config(page_title="IGHV Report Generator", layout="centered")
 st.title("IGHV Report Generator")
 st.caption("*UGENE-style consensus generator + IGHV DOCX reporter*")
@@ -171,8 +177,12 @@ st.caption("*UGENE-style consensus generator + IGHV DOCX reporter*")
 # ------------------------
 # SECTION 1: Consensus Generator
 # ------------------------
+
 st.header("1. UGENE-style Consensus Generator")
 cap3_input_file = st.file_uploader("Upload FASTA File with Forward (_F) and Reverse (_R) Reads", type=["txt", "fasta"])
+
+# 👇 New tolerance input
+tolerance_limit = st.number_input("Mismatch Tolerance (Max mismatches allowed in overlap)", min_value=0, max_value=10, value=0, step=1)
 
 if cap3_input_file:
     content = cap3_input_file.read().decode("utf-8")
@@ -181,7 +191,7 @@ if cap3_input_file:
     reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
 
     if forward and reverse:
-        consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse)
+        consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse, tolerance=tolerance_limit)
 
         st.subheader("Inputs and Intermediates")
         st.text_area("Forward Read (s1)", s1, height=100)
@@ -209,6 +219,7 @@ if cap3_input_file:
 # ------------------------
 # SECTION 2: IGHV Report Generator
 # ------------------------
+
 st.header("2. IGHV DOCX Report Generator")
 
 pdf_file = st.file_uploader("PDF file (IgBLAST results)", type="pdf")
