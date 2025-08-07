@@ -11,104 +11,125 @@ from PyPDF2 import PdfReader
 from pathlib import Path
 import streamlit as st
 from Bio.Seq import Seq
+from Bio import pairwise2
 
-# --- Helper Functions ---
-def parse_fasta_txt(txt):
-    lines = txt.strip().splitlines()
+# ---------- Helper Functions ----------
+
+def reverse_complement(seq: str) -> str:
+    return str(Seq(seq).reverse_complement())
+
+def parse_fasta(fasta_text: str) -> dict:
+    lines = fasta_text.strip().splitlines()
     seqs = {}
-    key = None
+    header = None
     for line in lines:
         if line.startswith(">"):
-            key = line[1:].strip()
-            seqs[key] = ""
-        elif key:
-            seqs[key] += line.strip()
+            header = line[1:].strip()
+            seqs[header] = ""
+        else:
+            seqs[header] += line.strip()
     return seqs
 
-def find_first_match_pos(s1, s3, k=5):
-    for i in range(len(s1) - k + 1):
-        window = s1[i:i+k]
-        for j in range(len(s3) - k + 1):
-            if window == s3[j:j+k]:
-                return i
-    return -1
-
-def find_last_match_pos(s1, s3, threshold):
-    for i in reversed(range(len(s1) - threshold)):
-        if s1[i] == s3[i]:
-            mismatches = sum(1 for a, b in zip(s1[i:i+threshold], s3[i:i+threshold]) if a != b)
-            if mismatches >= threshold:
-                return i
-    return -1
-
-def ugene_style_consensus(s1, s2, threshold=10):
-    s1 = s1.strip().replace("\n", "").upper()
-    s2 = s2.strip().replace("\n", "").upper()
+def ugene_style_consensus(forward: str, reverse: str, threshold: int):
+    s1 = forward.strip().replace("\n", "").upper()
+    s2 = reverse.strip().replace("\n", "").upper()
     s2_rev = s2[::-1]
-    s3 = str(Seq(s2_rev).complement())
+    s3 = reverse_complement(s2)
 
-    first_match = find_first_match_pos(s1, s3, k=5)
-    last_match = find_last_match_pos(s1, s3, threshold)
+    # Local alignment
+    alignments = pairwise2.align.localms(s1, s3, 2, -1, -5, -0.5)
+    if not alignments:
+        return "", s1, s2, s2_rev, s3, "", -1, -1, -1, "No alignment found.", "", "", ""
 
-    mismatch_count = -1
-    a2 = ""
-    if first_match != -1 and last_match != -1 and last_match > first_match:
-        a2_s1 = s1[first_match:last_match+1]
-        a2_s3 = s3[first_match:last_match+1]
-        mismatch_count = sum(1 for a, b in zip(a2_s1, a2_s3) if a != b)
-        a2 = a2_s1
-    else:
-        first_match = last_match = -1
-        a2 = ""
+    best_alignment = alignments[0]
+    aligned_s1 = best_alignment.seqA
+    aligned_s3 = best_alignment.seqB
+    start = best_alignment.start
+    end = best_alignment.end
 
-    if mismatch_count > threshold:
-        disclaimer = f"Number of mismatches is {mismatch_count} and it exceeds the threshold = {threshold}"
-    else:
-        disclaimer = None
+    aligned_s1_region = aligned_s1[start:end]
+    aligned_s3_region = aligned_s3[start:end]
+    mismatch_count = sum(1 for a, b in zip(aligned_s1_region, aligned_s3_region) if a != b)
+    match_line = ''.join('|' if a == b else ' ' for a, b in zip(aligned_s1, aligned_s3))
 
+    # Find first match point: 6-base exact match
+    first_match = -1
+    for i in range(len(s1) - 5):
+        if s1[i:i+6] == s3[i:i+6]:
+            first_match = i
+            break
+
+    # Find last match point: where threshold-length window has mismatches ≥ threshold
+    last_match = -1
+    for i in range(len(s1) - threshold):
+        window_s1 = s1[i:i+threshold]
+        window_s3 = s3[i:i+threshold]
+        mismatches = sum(1 for a, b in zip(window_s1, window_s3) if a != b)
+        if mismatches >= threshold:
+            last_match = i + threshold - 1
+            break
+
+    a2 = s1[first_match:last_match+1] if first_match != -1 and last_match != -1 else ""
     a1 = s1[:first_match].lower() if first_match != -1 else ""
-    a3 = Seq(s3[last_match+1:]).reverse_complement().lower() if last_match != -1 else ""
+    a3 = s3[last_match+1:].lower() if last_match != -1 else ""
+    consensus = a1 + a2.upper() + a3
 
-    consensus = a1 + a2.upper() + str(a3)
-    return consensus, s1, s2, s2_rev, s3, first_match, last_match, mismatch_count, disclaimer
+    disclaimer = ""
+    if mismatch_count > threshold:
+        disclaimer = f"⚠️ Mismatches ({mismatch_count}) exceed threshold ({threshold})"
 
-# --- Streamlit App ---
-st.title("IGHV Consensus Generator and Report Tool")
+    return consensus, s1, s2, s2_rev, s3, a2, first_match, last_match, mismatch_count, disclaimer, aligned_s1, match_line, aligned_s3
 
-# SECTION 1: Consensus Generator
-st.header("Section 1: UGENE-style Consensus Generator")
+# ---------- Streamlit App ----------
 
-uploaded_txt = st.file_uploader("Upload TXT file with IGHV_F and IGHV_R reads", type=["txt"])
-threshold = st.number_input("Mismatch Threshold (T)", min_value=0, max_value=100, value=10)
+st.set_page_config(page_title="IGHV Consensus Generator", layout="wide")
+st.title("🧬 IGHV UGENE-style Consensus Generator")
 
-if uploaded_txt:
-    txt_contents = uploaded_txt.read().decode("utf-8")
-    seqs = parse_fasta_txt(txt_contents)
+st.markdown("### 🔹 Section 1: Generate Consensus")
+
+uploaded_file = st.file_uploader("Upload a TXT file (FASTA format with _F and _R reads)", type=["txt"])
+threshold = st.number_input("Mismatch Threshold (T)", min_value=1, max_value=50, value=10)
+
+if uploaded_file:
+    content = uploaded_file.read().decode("utf-8")
+    seqs = parse_fasta(content)
     forward = next((v for k, v in seqs.items() if k.endswith("_F")), None)
     reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
 
     if forward and reverse:
-        consensus, s1, s2, s2_rev, s3, first_match, last_match, mismatch_count, disclaimer = ugene_style_consensus(forward, reverse, threshold)
+        consensus, s1, s2, s2_rev, s3, a2, first_match, last_match, mismatch_count, disclaimer, aligned_s1, match_line, aligned_s3 = ugene_style_consensus(forward, reverse, threshold)
 
-        st.subheader("Inputs and Intermediates")
-        st.text_area("IGHV_F (Forward Read)", s1, height=100)
-        st.text_area("IGHV_R (Reverse Read)", s2, height=100)
-        st.text_area("Reverse of IGHV_R", s2_rev, height=100)
-        st.text_area("Reverse-Complement of IGHV_R", s3, height=100)
-        st.write(f"First Match Point in IGHV_F: {first_match}")
-        st.write(f"Last Match Point in IGHV_F: {last_match}")
-        st.write(f"Number of Mismatches: {mismatch_count}")
+        st.subheader("🔍 Intermediate Results")
+        st.text_area("Forward Read (s1)", s1, height=100)
+        st.text_area("Reverse Read (s2)", s2, height=100)
+        st.text_area("Reverse of s2", s2_rev, height=100)
+        st.text_area("Reverse-Complement of s2 (s3)", s3, height=100)
+        st.text_area("Matched Region (a2)", a2, height=60)
+
+        st.write(f"🧭 First Match Point in IGHV_F: {first_match}")
+        st.write(f"🔚 Last Match Point in IGHV_F: {last_match}")
+        st.write(f"❌ Number of Mismatches in Alignment: {mismatch_count}")
         if disclaimer:
             st.warning(disclaimer)
 
-        st.subheader("Consensus Output")
-        st.text_area("Consensus", consensus, height=100)
+        st.subheader("🧩 Visual Alignment")
+        st.text("Aligned Forward Read (s1)")
+        st.code(aligned_s1)
+        st.text("Match Line")
+        st.code(match_line)
+        st.text("Aligned Reverse Complement (s3)")
+        st.code(aligned_s3)
 
-        consensus_filename = Path(uploaded_txt.name).stem + "_consensus.txt"
-        st.download_button("Download Consensus", consensus, file_name=consensus_filename, mime="text/plain")
-    else:
-        st.error("TXT must contain both IGHV_F and IGHV_R entries.")
+        st.subheader("✅ Final Consensus")
+        st.code(consensus, language="text")
 
+        # Download button
+        output_file = Path(uploaded_file.name).with_suffix(".consensus.txt")
+        st.download_button("📥 Download Consensus", consensus, file_name=output_file.name, mime="text/plain")
+
+st.markdown("---")
+st.markdown("### 🔹 Section 2: IGHV DOCX Report Generator")
+st.info("This section is unchanged and handles IGHV reporting.")
 
 # =======================
 # Section 2: IGHV DOCX Report Generator
