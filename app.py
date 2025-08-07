@@ -17,13 +17,17 @@ def ugene_style_consensus(fwd, rev):
     rev_rc = reverse_complement(rev.strip().replace("\n", "").upper())
 
     overlap_len = 22
+    overlap = fwd[:overlap_len]
+    idx = rev_rc.find(overlap)
 
-    # Trim the rev_rc to remove overlap (leave only non-overlapping part)
-    rev_flank = rev_rc[:-overlap_len].lower()
-    overlap = rev_rc[-overlap_len:]  # This will be same as fwd[:22]
-    fwd_rest = fwd[overlap_len:].lower()
+    if idx == -1:
+        return "Overlap not found!"
 
-    return rev_flank + overlap + fwd_rest
+    left = rev_rc[:idx].lower()
+    mid = overlap.upper()
+    right = fwd[overlap_len:].lower()
+
+    return left + mid + right
 
 
 def parse_fasta(text):
