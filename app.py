@@ -4,49 +4,47 @@ from docx import Document
 import PyPDF2
 import re
 from datetime import datetime
-from Bio import pairwise2
 
 # ------------------------
 # UGENE-style Consensus Logic
 # ------------------------
 
-def reverse_seq(seq):
+def reverse(seq):
     return seq[::-1]
 
 def complement(seq):
     return seq.translate(str.maketrans("ACGTacgt", "TGCAtgca"))
 
 def reverse_complement(seq):
-    return complement(reverse_seq(seq))
+    return complement(reverse(seq))
 
-def ugene_style_consensus(s1, rev_read):
+def find_overlap_prefix_suffix(s1, s3):
+    """Return longest overlap where s1 starts with a suffix of s3"""
+    max_len = min(len(s1), len(s3))
+    for i in range(max_len, 0, -1):
+        if s1.startswith(s3[-i:]):
+            return s3[-i:], i
+    return "", 0
+
+def ugene_style_consensus(s1, s2):
     s1 = s1.strip().replace("\n", "").upper()
-    rev_read = rev_read.strip().replace("\n", "").upper()
+    s2 = s2.strip().replace("\n", "").upper()
 
-    s2_rev = reverse_seq(rev_read)
-    s3 = reverse_complement(rev_read)
+    s2_rev = reverse(s2)
+    s3 = reverse_complement(s2)
 
-    alignments = pairwise2.align.localms(s1, s3, 2, -1, -5, -0.5)
-    if not alignments:
-        return None, s1, rev_read, s2_rev, s3, "", ""
+    matching_str, match_len = find_overlap_prefix_suffix(s1, s3)
 
-    best = alignments[0]
-    aligned_s1, aligned_s3, score, start, end = best
+    if match_len == 0:
+        return None, s1, s2, s2_rev, s3, "", ""
 
-    a2 = ""
-    match_start_s1 = start
-    match_end_s1 = end
+    a1 = s1[match_len:].lower()
+    a2 = matching_str.upper()
+    unmatched_s3 = s3[:-match_len]  # the part of s3 not included in match
+    a3 = reverse_complement(unmatched_s3).lower()
 
-    a1 = s1[:match_start_s1].lower()
-    a2 = s1[match_start_s1:match_end_s1].upper()
-
-    aligned_length = match_end_s1 - match_start_s1
-    s3_aligned = s3[match_start_s1:match_end_s1]
-    s3_suffix_unaligned = s3[match_end_s1:]
-    a3 = reverse_complement(s3_suffix_unaligned).lower()
-
-    s4 = a1 + a2 + a3
-    return s4, s1, rev_read, s2_rev, s3, a2, a3
+    consensus = a1 + a2 + a3
+    return consensus, s1, s2, s2_rev, s3, a2, a3
 
 def parse_fasta(text):
     seqs = {}
@@ -97,13 +95,7 @@ def extract_from_pdf(pdf_bytes):
 # ------------------------
 # DOCX Report Generator
 # ------------------------
-def generate_docx_report(
-    gene_names_list,
-    percent_identity_str,
-    ratio_str,
-    template_bytes,
-    sample_id_text
-):
+def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, template_bytes, sample_id_text):
     gene_name_str = ", ".join(str(g).strip() for g in gene_names_list)
     percent_identity = float(percent_identity_str.strip('%'))
     mutation_percent = round(100 - percent_identity, 1)
@@ -186,10 +178,10 @@ if cap3_input_file:
     content = cap3_input_file.read().decode("utf-8")
     seqs = parse_fasta(content)
     forward = next((v for k, v in seqs.items() if k.endswith("_F")), None)
-    reverse_seq_raw = next((v for k, v in seqs.items() if k.endswith("_R")), None)
+    reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
 
-    if forward and reverse_seq_raw:
-        consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse_seq_raw)
+    if forward and reverse:
+        consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse)
 
         st.subheader("Inputs and Intermediates")
         st.text_area("Forward Read (s1)", s1, height=100)
@@ -210,12 +202,12 @@ if cap3_input_file:
                 mime="text/plain"
             )
         else:
-            st.warning("No overlap found. Manual intervention needed.")
+            st.warning("No match found. Manual intervention needed.")
     else:
         st.error("Could not find both _F and _R sequences in file.")
 
 # ------------------------
-# SECTION 2: IGHV Report Generator (Unchanged)
+# SECTION 2: IGHV Report Generator
 # ------------------------
 st.header("2. IGHV DOCX Report Generator")
 
