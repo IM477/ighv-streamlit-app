@@ -9,6 +9,9 @@ import tempfile
 from pathlib import Path
 import os
 
+import shutil
+st.write("CAP3 binary path:", shutil.which("cap3"))
+
 # ============================================================
 # CAP3 Function
 # ============================================================
