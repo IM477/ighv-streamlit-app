@@ -13,13 +13,20 @@ def reverse_complement(seq):
     return seq.translate(complement)[::-1]
 
 def ugene_style_consensus(fwd, rev):
-    rev_rc = reverse_complement(rev)
-    overlap_len = 22  # Fixed overlap used by UGENE default
-    if not fwd or not rev:
-        return ""
-    fwd = fwd.upper().replace("\n", "")
-    rev_rc = rev_rc.upper().replace("\n", "")
-    consensus = rev_rc + fwd[overlap_len:]
+    fwd = fwd.strip().replace("\n", "").upper()
+    rev_rc = reverse_complement(rev.strip().replace("\n", ""))
+
+    # Fixed overlap UGENE uses
+    overlap_len = 22
+
+    # Extract segments
+    rev_nonoverlap = rev_rc[:-overlap_len].lower()
+    rev_overlap = rev_rc[-overlap_len:]
+    fwd_overlap = fwd[:overlap_len]
+    fwd_nonoverlap = fwd[overlap_len:].lower()
+
+    # Build consensus with overlap in UPPERCASE
+    consensus = rev_nonoverlap + rev_overlap.upper() + fwd_nonoverlap
     return consensus
 
 def parse_fasta(text):
