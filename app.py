@@ -29,79 +29,84 @@ def parse_fasta_txt(file_content):
         seqs[header] = sequence
     return seqs
 
-def find_match_region(s1, s3):
+def ugene_style_consensus(forward, reverse, threshold=10):
+    s1 = forward.strip().replace("\n", "").upper()
+    s2 = reverse.strip().replace("\n", "").upper()
+    s2_rev = s2[::-1]
+    s3 = str(Seq(s2_rev).complement())
+
     first_match = None
     last_match = None
-    mismatches = 0
-
-    for i in range(len(s1)):
-        if i >= len(s3):
-            break
+    for i in range(min(len(s1), len(s3))):
         if s1[i] == s3[i]:
             if first_match is None:
                 first_match = i
             last_match = i
 
+    mismatch_count = 0
+    a2 = ""
     if first_match is not None and last_match is not None:
-        region_s1 = s1[first_match:last_match + 1]
-        region_s3 = s3[first_match:last_match + 1]
-        mismatches = sum(1 for a, b in zip(region_s1, region_s3) if a != b)
+        for i in range(first_match, last_match + 1):
+            if s1[i] != s3[i]:
+                mismatch_count += 1
+        a2 = s1[first_match:last_match + 1]
+    else:
+        return None, s1, s2, s2_rev, s3, None, None, 0, None, None
 
-    return first_match, last_match, mismatches
+    if mismatch_count > threshold:
+        return None, s1, s2, s2_rev, s3, first_match, last_match, mismatch_count, None, None
+
+    prefix = s1[:last_match + 1]
+    suffix = s3[last_match + 1:]
+    a3 = suffix
+    consensus = prefix + suffix
+    return consensus, s1, s2, s2_rev, s3, first_match, last_match, mismatch_count, a2, a3
 
 if txt_file:
     seq_data = parse_fasta_txt(txt_file.read())
 
-    forward_key = next((k for k in seq_data if "IGHV_F" in k), None)
-    reverse_key = next((k for k in seq_data if "IGHV_R" in k), None)
+    forward = next((v for k, v in seq_data.items() if k.endswith("_F")), None)
+    reverse = next((v for k, v in seq_data.items() if k.endswith("_R")), None)
 
-    if forward_key and reverse_key:
-        s1 = seq_data[forward_key]
-        s2 = seq_data[reverse_key]
-        s2_rev = s2[::-1]
-        s3 = str(Seq(s2_rev).complement())
+    if forward and reverse:
+        consensus, s1, s2, s2_rev, s3, first_match, last_match, mismatch_count, a2, a3 = ugene_style_consensus(forward, reverse, threshold)
 
-        first_match, last_match, mismatches = find_match_region(s1, s3)
-
-        st.subheader("Intermediate Results")
-        st.text(f"Forward Read (IGHV_F):\n{s1}")
-        st.text(f"Reverse Read (IGHV_R):\n{s2}")
-        st.text(f"Reverse of IGHV_R:\n{s2_rev}")
-        st.text(f"Reverse Complement of IGHV_R:\n{s3}")
+        st.subheader("Inputs and Intermediates")
+        st.text_area("Forward Read (s1)", s1, height=100)
+        st.text_area("Reverse Read (s2)", s2, height=100)
+        st.text_area("Reverse of s2 (s2_rev)", s2_rev, height=100)
+        st.text_area("Reverse Complement (s3)", s3, height=100)
 
         if first_match is not None and last_match is not None:
-            st.write(f"🔍 First Match Position in IGHV_F: {first_match}")
-            st.write(f"🔍 Last Match Position in IGHV_F: {last_match}")
-            st.write(f"❌ Number of Mismatches: {mismatches}")
-
-            if mismatches > threshold:
-                st.warning(f"⚠️ Number of mismatches ({mismatches}) exceeds threshold = {threshold}")
-            else:
-                prefix = s1[:last_match + 1]
-                suffix = s3[last_match + 1:]
-                consensus = prefix + suffix
-
-                st.subheader("✅ Final Consensus Sequence")
-                st.text(consensus)
-
-                # Enable download
-                consensus_bytes = BytesIO()
-                consensus_bytes.write(consensus.encode('utf-8'))
-                consensus_bytes.seek(0)
-
-                st.download_button(
-                    label="Download Consensus",
-                    data=consensus_bytes,
-                    file_name="consensus_output.txt",
-                    mime="text/plain"
-                )
+            st.write(f"🔍 First Match Position: {first_match}")
+            st.write(f"🔍 Last Match Position: {last_match}")
+            st.write(f"❌ Mismatches: {mismatch_count}")
         else:
-            st.error("❌ No matching region found between forward read and reverse-complement.")
+            st.error("❌ No matching region found between s1 and s3.")
+
+        if consensus:
+            st.subheader("✅ Consensus Output")
+            st.text_area("Matching region (a2)", a2, height=100)
+            st.text_area("Unmatched suffix from s3 (a3)", a3, height=100)
+            st.text_area("Final Consensus Sequence", consensus, height=150)
+
+            consensus_bytes = BytesIO()
+            consensus_bytes.write(consensus.encode('utf-8'))
+            consensus_bytes.seek(0)
+
+            st.download_button(
+                label="Download Consensus",
+                data=consensus_bytes,
+                file_name="consensus_output.txt",
+                mime="text/plain"
+            )
+        elif first_match is not None:
+            st.warning(f"⚠️ Mismatch count = {mismatch_count} exceeds threshold = {threshold}")
     else:
-        st.error("❌ IGHV_F or IGHV_R entry not found in TXT file.")
+        st.error("❌ Could not find both IGHV_F and IGHV_R sequences in TXT.")
 
 # ============================================================
-# SECTION 2: IGHV Report Generator (original, untouched)
+# SECTION 2: IGHV Report Generator (original logic preserved)
 # ============================================================
 
 st.title("IGHV Report Generator")
@@ -134,7 +139,6 @@ def extract_from_pdf(pdf_bytes):
             raw_line = line.strip()
             if not raw_line:
                 continue
-
             words = raw_line.split()
             for word in words:
                 if word.startswith("IGHV"):
@@ -153,13 +157,7 @@ def extract_from_pdf(pdf_bytes):
 
     return gene_names_list, percent_identity_str, ratio_str
 
-def generate_docx_report(
-    gene_names_list,
-    percent_identity_str,
-    ratio_str,
-    template_bytes,
-    sample_id_text
-):
+def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, template_bytes, sample_id_text):
     gene_name_str = ", ".join(str(g).strip() for g in gene_names_list)
     percent_identity = float(percent_identity_str.strip('%'))
     mutation_percent = round(100 - percent_identity, 1)
@@ -220,10 +218,7 @@ def generate_docx_report(
 
     for table in doc.tables:
         first_row = [cell.text.strip() for cell in table.rows[0].cells]
-        if (
-            "Name" in first_row
-            and "Percentage Identity Detected" in first_row
-        ):
+        if "Name" in first_row and "Percentage Identity Detected" in first_row:
             if len(table.rows) > 1:
                 for i in range(len(table.rows) - 1, 0, -1):
                     tbl = table._tbl
