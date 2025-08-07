@@ -8,99 +8,106 @@ from PyPDF2 import PdfReader
 # =======================
 # UGENE-style Consensus Logic with Updated Match Points
 # =======================
-def ugene_style_consensus(forward, reverse, threshold=10):
-    s1 = forward.strip().replace("\n", "").upper()
-    s2 = reverse.strip().replace("\n", "").upper()
+from pathlib import Path
+import streamlit as st
+from Bio.Seq import Seq
+
+# --- Helper Functions ---
+def parse_fasta_txt(txt):
+    lines = txt.strip().splitlines()
+    seqs = {}
+    key = None
+    for line in lines:
+        if line.startswith(">"):
+            key = line[1:].strip()
+            seqs[key] = ""
+        elif key:
+            seqs[key] += line.strip()
+    return seqs
+
+def find_first_match_pos(s1, s3, k=5):
+    for i in range(len(s1) - k + 1):
+        window = s1[i:i+k]
+        for j in range(len(s3) - k + 1):
+            if window == s3[j:j+k]:
+                return i
+    return -1
+
+def find_last_match_pos(s1, s3, threshold):
+    for i in reversed(range(len(s1) - threshold)):
+        if s1[i] == s3[i]:
+            mismatches = sum(1 for a, b in zip(s1[i:i+threshold], s3[i:i+threshold]) if a != b)
+            if mismatches >= threshold:
+                return i
+    return -1
+
+def ugene_style_consensus(s1, s2, threshold=10):
+    s1 = s1.strip().replace("\n", "").upper()
+    s2 = s2.strip().replace("\n", "").upper()
     s2_rev = s2[::-1]
     s3 = str(Seq(s2_rev).complement())
 
-    # Find first match point: s1[i:i+5] == s3[i:i+5]
-    first_match_pos = -1
-    for i in range(len(s1) - 4):
-        if s1[i:i+5] == s3[i:i+5]:
-            first_match_pos = i
-            break
+    first_match = find_first_match_pos(s1, s3, k=5)
+    last_match = find_last_match_pos(s1, s3, threshold)
 
-    # Find last match point: s1[j:j+T] != s3[j:j+T]
-    last_match_pos = -1
-    for j in reversed(range(len(s1) - threshold)):
-        if s1[j:j+threshold] != s3[j:j+threshold]:
-            last_match_pos = j
-            break
+    mismatch_count = -1
+    a2 = ""
+    if first_match != -1 and last_match != -1 and last_match > first_match:
+        a2_s1 = s1[first_match:last_match+1]
+        a2_s3 = s3[first_match:last_match+1]
+        mismatch_count = sum(1 for a, b in zip(a2_s1, a2_s3) if a != b)
+        a2 = a2_s1
+    else:
+        first_match = last_match = -1
+        a2 = ""
 
-    if first_match_pos == -1 or last_match_pos == -1 or first_match_pos >= last_match_pos:
-        return None, s1, s2, s2_rev, s3, first_match_pos, last_match_pos, None, "No valid match found"
+    if mismatch_count > threshold:
+        disclaimer = f"Number of mismatches is {mismatch_count} and it exceeds the threshold = {threshold}"
+    else:
+        disclaimer = None
 
-    matched_s1 = s1[first_match_pos:last_match_pos + 1]
-    matched_s3 = s3[first_match_pos:last_match_pos + 1]
+    a1 = s1[:first_match].lower() if first_match != -1 else ""
+    a3 = Seq(s3[last_match+1:]).reverse_complement().lower() if last_match != -1 else ""
 
-    mismatches = sum(1 for a, b in zip(matched_s1, matched_s3) if a != b)
+    consensus = a1 + a2.upper() + str(a3)
+    return consensus, s1, s2, s2_rev, s3, first_match, last_match, mismatch_count, disclaimer
 
-    disclaimer = None
-    if mismatches > threshold:
-        disclaimer = f"Number of mismatches = {mismatches}, which exceeds threshold = {threshold}"
+# --- Streamlit App ---
+st.title("IGHV Consensus Generator and Report Tool")
 
-    a1 = s1[:last_match_pos + 1]
-    suffix_s3 = s3[last_match_pos + 1:]
-    a3 = str(Seq(suffix_s3).reverse_complement())
+# SECTION 1: Consensus Generator
+st.header("Section 1: UGENE-style Consensus Generator")
 
-    consensus = a1 + a3
-
-    return consensus, s1, s2, s2_rev, s3, first_match_pos, last_match_pos, mismatches, disclaimer
-
-
-# =======================
-# Streamlit App UI
-# =======================
-st.set_page_config(layout="wide")
-st.title("IGHV UGENE-style Consensus Generator")
-
-# Section 1: Consensus Generator
-st.header("1. Generate Consensus from Forward/Reverse TXT")
-uploaded_txt = st.file_uploader("Upload Forward + Reverse Reads TXT File", type=["txt"], key="txt_file")
-threshold = st.number_input("Mismatch Threshold (T)", min_value=1, value=10, step=1)
+uploaded_txt = st.file_uploader("Upload TXT file with IGHV_F and IGHV_R reads", type=["txt"])
+threshold = st.number_input("Mismatch Threshold (T)", min_value=0, max_value=100, value=10)
 
 if uploaded_txt:
-    contents = uploaded_txt.read().decode("utf-8").splitlines()
-    seqs = {}
-    current_key = None
-    for line in contents:
-        if line.startswith(">"):
-            current_key = line[1:].strip()
-            seqs[current_key] = ""
-        elif current_key:
-            seqs[current_key] += line.strip()
-
+    txt_contents = uploaded_txt.read().decode("utf-8")
+    seqs = parse_fasta_txt(txt_contents)
     forward = next((v for k, v in seqs.items() if k.endswith("_F")), None)
     reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
 
     if forward and reverse:
-        result = ugene_style_consensus(forward, reverse, threshold)
-        if result is None:
-            st.error("No valid match region found. Cannot generate consensus.")
-        else:
-            consensus, s1, s2, s2_rev, s3, first_pos, last_pos, mismatches, disclaimer = result
+        consensus, s1, s2, s2_rev, s3, first_match, last_match, mismatch_count, disclaimer = ugene_style_consensus(forward, reverse, threshold)
 
-            st.subheader("Inputs and Intermediates")
-            st.text_area("Forward Read (s1)", s1, height=100)
-            st.text_area("Reverse Read (s2)", s2, height=100)
-            st.text_area("Reverse of s2 (s2_rev)", s2_rev, height=100)
-            st.text_area("Reverse Complement of s2 (s3)", s3, height=100)
+        st.subheader("Inputs and Intermediates")
+        st.text_area("IGHV_F (Forward Read)", s1, height=100)
+        st.text_area("IGHV_R (Reverse Read)", s2, height=100)
+        st.text_area("Reverse of IGHV_R", s2_rev, height=100)
+        st.text_area("Reverse-Complement of IGHV_R", s3, height=100)
+        st.write(f"First Match Point in IGHV_F: {first_match}")
+        st.write(f"Last Match Point in IGHV_F: {last_match}")
+        st.write(f"Number of Mismatches: {mismatch_count}")
+        if disclaimer:
+            st.warning(disclaimer)
 
-            st.subheader("Matching Info")
-            st.markdown(f"**First Match Position in s1:** {first_pos}")
-            st.markdown(f"**Last Match Position in s1:** {last_pos}")
-            st.markdown(f"**Mismatches between matched region of s1 and s3:** {mismatches}")
-            if disclaimer:
-                st.warning(disclaimer)
+        st.subheader("Consensus Output")
+        st.text_area("Consensus", consensus, height=100)
 
-            st.subheader("Final Consensus")
-            st.text_area("Consensus Sequence", consensus, height=100)
-
-            output_filename = os.path.splitext(uploaded_txt.name)[0] + "_consensus.txt"
-            st.download_button("Download Consensus", consensus, file_name=output_filename, mime="text/plain")
+        consensus_filename = Path(uploaded_txt.name).stem + "_consensus.txt"
+        st.download_button("Download Consensus", consensus, file_name=consensus_filename, mime="text/plain")
     else:
-        st.error("Missing forward (_F) or reverse (_R) read in TXT file.")
+        st.error("TXT must contain both IGHV_F and IGHV_R entries.")
 
 
 # =======================
