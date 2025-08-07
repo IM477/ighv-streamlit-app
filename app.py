@@ -14,20 +14,17 @@ def reverse_complement(seq):
 
 def ugene_style_consensus(fwd, rev):
     fwd = fwd.strip().replace("\n", "").upper()
-    rev_rc = reverse_complement(rev.strip().replace("\n", ""))
+    rev_rc = reverse_complement(rev.strip().replace("\n", "").upper())
 
-    # Fixed overlap UGENE uses
     overlap_len = 22
 
-    # Extract segments
-    rev_nonoverlap = rev_rc[:-overlap_len].lower()
-    rev_overlap = rev_rc[-overlap_len:]
-    fwd_overlap = fwd[:overlap_len]
-    fwd_nonoverlap = fwd[overlap_len:].lower()
+    # Trim the rev_rc to remove overlap (leave only non-overlapping part)
+    rev_flank = rev_rc[:-overlap_len].lower()
+    overlap = rev_rc[-overlap_len:]  # This will be same as fwd[:22]
+    fwd_rest = fwd[overlap_len:].lower()
 
-    # Build consensus with overlap in UPPERCASE
-    consensus = rev_nonoverlap + rev_overlap.upper() + fwd_nonoverlap
-    return consensus
+    return rev_flank + overlap + fwd_rest
+
 
 def parse_fasta(text):
     seqs = {}
