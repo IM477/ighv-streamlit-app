@@ -12,27 +12,29 @@ def reverse_complement(seq):
     complement = str.maketrans("ACGTacgt", "TGCAtgca")
     return seq.translate(complement)[::-1]
 
-def ugene_style_consensus(fwd, rev):
-    fwd = fwd.strip().replace("\n", "").upper()
-    rev = rev.strip().replace("\n", "").upper()
-    rev_rc = reverse_complement(rev)
+def ugene_style_consensus(forward, reverse):
+    def reverse_complement(seq):
+        complement = str.maketrans("ACGTacgt", "TGCAtgca")
+        return seq.translate(complement)[::-1]
 
+    forward = forward.replace("\n", "").upper()
+    reverse_rc = reverse_complement(reverse.replace("\n", "").upper())
+
+    # Find longest suffix of reverse_rc that matches prefix of forward
     max_overlap = 0
-    best_i = 0
+    for i in range(1, min(len(forward), len(reverse_rc)) + 1):
+        if reverse_rc[-i:] == forward[:i]:
+            max_overlap = i
 
-    # Align forward read onto reverse-complement of reverse read
-    for i in range(len(rev_rc)):
-        suffix = rev_rc[i:]
-        if fwd.startswith(suffix):
-            max_overlap = len(suffix)
-            best_i = i
-            break  # UGENE uses first valid alignment
+    # Construct consensus with lowercase non-overlap, uppercase overlap, lowercase tail
+    non_overlap = reverse_rc[:-max_overlap] if max_overlap > 0 else reverse_rc
+    overlap = reverse_rc[-max_overlap:] if max_overlap > 0 else ""
+    tail = forward[max_overlap:]
 
-    if max_overlap == 0:
-        return "No overlap found"
-
-    # Return original reverse read as consensus, because that's how UGENE reports
-    return rev
+    consensus = (
+        non_overlap.lower() + overlap.upper() + tail.lower()
+    )
+    return consensus
 
 def parse_fasta(text):
     seqs = {}
