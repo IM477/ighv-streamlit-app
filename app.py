@@ -14,27 +14,25 @@ def reverse_complement(seq):
 
 def ugene_style_consensus(fwd, rev):
     fwd = fwd.strip().replace("\n", "").upper()
-    rev_rc = reverse_complement(rev.strip().replace("\n", "").upper())
+    rev = rev.strip().replace("\n", "").upper()
+    rev_rc = reverse_complement(rev)
 
     max_overlap = 0
     best_i = 0
 
-    # Try all possible suffixes of rev_rc against prefixes of fwd
+    # Align forward read onto reverse-complement of reverse read
     for i in range(len(rev_rc)):
         suffix = rev_rc[i:]
         if fwd.startswith(suffix):
             max_overlap = len(suffix)
             best_i = i
-            break  # stop at first (longest) match
+            break  # UGENE uses first valid alignment
 
     if max_overlap == 0:
         return "No overlap found"
 
-    left = rev_rc[:best_i].lower()
-    mid = fwd[:max_overlap].upper()
-    right = fwd[max_overlap:].lower()
-
-    return left + mid + right
+    # Return original reverse read as consensus, because that's how UGENE reports
+    return rev
 
 def parse_fasta(text):
     seqs = {}
