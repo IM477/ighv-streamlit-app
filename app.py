@@ -5,15 +5,41 @@ import PyPDF2
 import re
 from datetime import datetime
 
-# ============================================================
-# Helper function: extract data from PDF
-# ============================================================
+# ------------------------
+# UGENE-style Consensus Logic
+# ------------------------
+def reverse_complement(seq):
+    complement = str.maketrans("ACGTMRWSYKVHDBNacgtmrwsykvhdbn", "TGCANKYWSRMBDHVNtgcankywsrmbdhvn")
+    return seq.translate(complement)[::-1]
+
+def ugene_style_consensus(fwd, rev):
+    rev_rc = reverse_complement(rev)
+    overlap_len = 22  # Fixed overlap used by UGENE default
+    if not fwd or not rev:
+        return ""
+    fwd = fwd.upper().replace("\n", "")
+    rev_rc = rev_rc.upper().replace("\n", "")
+    consensus = rev_rc + fwd[overlap_len:]
+    return consensus
+
+def parse_fasta(text):
+    seqs = {}
+    current_label = None
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if line.startswith(">"):
+            current_label = line[1:]
+            seqs[current_label] = ""
+        elif current_label:
+            seqs[current_label] += line.upper()
+    return seqs
+
+# ------------------------
+# IGHV PDF extraction
+# ------------------------
 def extract_from_pdf(pdf_bytes):
     pdf_reader = PyPDF2.PdfReader(BytesIO(pdf_bytes))
-    text = ""
-    for page in pdf_reader.pages:
-        page_text = page.extract_text()
-        text += "\n" + page_text
+    text = "".join(page.extract_text() or "" for page in pdf_reader.pages)
 
     gene_names_list = []
     percent_identity_str = None
@@ -23,16 +49,9 @@ def extract_from_pdf(pdf_bytes):
     section_match = pattern_section.search(text)
     if section_match:
         start_pos = section_match.end()
-        remaining_text = text[start_pos:]
-        lines_after_section = remaining_text.strip().splitlines()
-
+        lines_after_section = text[start_pos:].strip().splitlines()
         for line in lines_after_section:
-            raw_line = line.strip()
-            if not raw_line:
-                continue
-
-            words = raw_line.split()
-            for word in words:
+            for word in line.strip().split():
                 if word.startswith("IGHV"):
                     gene_names_list.append(word)
             if gene_names_list:
@@ -49,9 +68,9 @@ def extract_from_pdf(pdf_bytes):
 
     return gene_names_list, percent_identity_str, ratio_str
 
-# ============================================================
-# Helper function: generate DOCX
-# ============================================================
+# ------------------------
+# DOCX Report Generator
+# ------------------------
 def generate_docx_report(
     gene_names_list,
     percent_identity_str,
@@ -64,7 +83,6 @@ def generate_docx_report(
     mutation_percent = round(100 - percent_identity, 1)
     mutation_percent_str = f"{mutation_percent}%"
 
-    # Determine prognosis
     if any("3-21" in g for g in gene_names_list):
         prognosis_text = (
             "BAD\n"
@@ -75,73 +93,44 @@ def generate_docx_report(
     else:
         if mutation_percent < 2.0:
             prognosis_text = "BAD"
-            prognosis_single_line = "BAD"
         elif 2.1 <= mutation_percent <= 3.0:
             prognosis_text = "Borderline with intermediate clinical course"
-            prognosis_single_line = "Borderline with intermediate clinical course"
         else:
             prognosis_text = "GOOD"
-            prognosis_single_line = "GOOD"
+        prognosis_single_line = prognosis_text
 
-    # Load DOCX template from bytes
     doc = Document(BytesIO(template_bytes))
 
-    # Replace Sample ID in header
-    if sample_id_text:
-        for section in doc.sections:
-            header = section.header
-            for para in header.paragraphs:
-                if "Sample ID" in para.text:
-                    para.text = f"Sample ID: {sample_id_text}"
-
-    # Replace Sample ID in body paragraphs
-    if sample_id_text:
-        for para in doc.paragraphs:
+    for section in doc.sections:
+        for para in section.header.paragraphs:
             if "Sample ID" in para.text:
                 para.text = f"Sample ID: {sample_id_text}"
 
-    # Replace Sample ID in tables
-    if sample_id_text:
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    if "Sample ID" in cell.text:
-                        cell.text = f"Sample ID: {sample_id_text}"
-
-    # Replace mutation and prognosis in paragraphs
     for para in doc.paragraphs:
-        if "Mutation detected:" in para.text:
+        if "Sample ID" in para.text:
+            para.text = f"Sample ID: {sample_id_text}"
+        elif "Mutation detected:" in para.text:
             para.text = f"Mutation detected: {mutation_percent_str}"
-
-        if "Clinical Prognosis" in para.text:
+        elif "Clinical Prognosis" in para.text:
             idx = doc.paragraphs.index(para)
             if idx + 1 < len(doc.paragraphs):
                 doc.paragraphs[idx + 1].text = prognosis_text
 
-    # Replace mutation and prognosis in tables
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                if "Mutation detected:" in cell.text:
-                    value_cell = row.cells[1]
-                    value_cell.text = mutation_percent_str
-                if "Clinical Prognosis:" in cell.text:
-                    value_cell = row.cells[1]
-                    value_cell.text = prognosis_single_line
+                if "Sample ID" in cell.text:
+                    cell.text = f"Sample ID: {sample_id_text}"
+                elif "Mutation detected:" in cell.text:
+                    row.cells[1].text = mutation_percent_str
+                elif "Clinical Prognosis:" in cell.text:
+                    row.cells[1].text = prognosis_single_line
 
-    # Fill the Closest Allele table
     for table in doc.tables:
         first_row = [cell.text.strip() for cell in table.rows[0].cells]
-        if (
-            "Name" in first_row
-            and "Percentage Identity Detected" in first_row
-        ):
-            if len(table.rows) > 1:
-                for i in range(len(table.rows) - 1, 0, -1):
-                    tbl = table._tbl
-                    tr = table.rows[i]._tr
-                    tbl.remove(tr)
-
+        if "Name" in first_row and "Percentage Identity Detected" in first_row:
+            for i in range(len(table.rows) - 1, 0, -1):
+                table._tbl.remove(table.rows[i]._tr)
             row_cells = table.add_row().cells
             row_cells[0].text = gene_name_str
             row_cells[1].text = percent_identity_str
@@ -149,30 +138,57 @@ def generate_docx_report(
             row_cells[3].text = ratio_str
             break
 
-    # Save to BytesIO
     output = BytesIO()
     doc.save(output)
     output.seek(0)
-
     return output
 
-# ============================================================
-# STREAMLIT APP UI
-# ============================================================
+# ------------------------
+# STREAMLIT APP
+# ------------------------
 st.set_page_config(page_title="IGHV Report Generator", layout="centered")
 st.title("IGHV Report Generator")
+st.caption("*UGENE-style consensus generator + IGHV DOCX reporter*")
 
-# ADD YOUR TAGLINE BELOW THE TITLE
-st.caption("*A Wobble Base Bioresearch proprietary software*")
+# ------------------------
+# SECTION 1: Consensus Generator
+# ------------------------
+st.header("1. UGENE-style Consensus Generator")
+cap3_input_file = st.file_uploader("Upload FASTA File with Forward (_F) and Reverse (_R) Reads", type=["txt", "fasta"])
 
-st.write("Please upload:")
+if cap3_input_file:
+    content = cap3_input_file.read().decode("utf-8")
+    seqs = parse_fasta(content)
+    forward = next((v for k, v in seqs.items() if k.endswith("_F")), None)
+    reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
+
+    if forward and reverse:
+        consensus = ugene_style_consensus(forward, reverse)
+        st.success("UGENE-style Consensus Generated")
+        st.code(consensus, language="text")
+
+        # Download button
+        consensus_bytes = BytesIO(consensus.encode("utf-8"))
+        st.download_button(
+            label="Download Consensus (.txt)",
+            data=consensus_bytes,
+            file_name="consensus_output.txt",
+            mime="text/plain"
+        )
+    else:
+        st.error("Could not find both _F and _R sequences in file.")
+
+# ------------------------
+# SECTION 2: IGHV Report Generator
+# ------------------------
+st.header("2. IGHV DOCX Report Generator")
+
 pdf_file = st.file_uploader("PDF file (IgBLAST results)", type="pdf")
 docx_template_file = st.file_uploader("Word Template (.docx)", type="docx")
 ab1_file = st.file_uploader(".ab1 Sequence File", type="ab1")
 
-if st.button("Generate Report"):
+if st.button("Generate IGHV Report"):
     if pdf_file and docx_template_file and ab1_file:
-        # Extract sample ID
         ab1_filename = ab1_file.name
         sample_id = ab1_filename.split("(")[0].strip()
         date_str = datetime.now().strftime("%d-%m-%Y")
@@ -182,7 +198,6 @@ if st.button("Generate Report"):
         st.info(f"Sample ID: {sample_id}")
         st.info(f"Output file name: {output_filename}")
 
-        # Process PDF
         pdf_bytes = pdf_file.read()
         gene_names_list, percent_identity_str, ratio_str = extract_from_pdf(pdf_bytes)
 
@@ -191,16 +206,14 @@ if st.button("Generate Report"):
         st.write("Ratio:", ratio_str)
 
         if gene_names_list and percent_identity_str and ratio_str:
-            # Generate DOCX
             docx_bytes = generate_docx_report(
-                gene_names_list= gene_names_list,
+                gene_names_list=gene_names_list,
                 percent_identity_str=percent_identity_str,
                 ratio_str=ratio_str,
                 template_bytes=docx_template_file.read(),
                 sample_id_text=final_name
             )
 
-            # Provide download
             st.download_button(
                 label="Download Report",
                 data=docx_bytes,
