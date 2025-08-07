@@ -16,19 +16,25 @@ def ugene_style_consensus(fwd, rev):
     fwd = fwd.strip().replace("\n", "").upper()
     rev_rc = reverse_complement(rev.strip().replace("\n", "").upper())
 
-    overlap_len = 22
-    overlap = fwd[:overlap_len]
-    idx = rev_rc.find(overlap)
+    max_overlap = 0
+    best_i = 0
 
-    if idx == -1:
-        return "Overlap not found!"
+    # Try all possible suffixes of rev_rc against prefixes of fwd
+    for i in range(len(rev_rc)):
+        suffix = rev_rc[i:]
+        if fwd.startswith(suffix):
+            max_overlap = len(suffix)
+            best_i = i
+            break  # stop at first (longest) match
 
-    left = rev_rc[:idx].lower()
-    mid = overlap.upper()
-    right = fwd[overlap_len:].lower()
+    if max_overlap == 0:
+        return "No overlap found"
+
+    left = rev_rc[:best_i].lower()
+    mid = fwd[:max_overlap].upper()
+    right = fwd[max_overlap:].lower()
 
     return left + mid + right
-
 
 def parse_fasta(text):
     seqs = {}
