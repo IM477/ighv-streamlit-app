@@ -8,128 +8,142 @@ from PyPDF2 import PdfReader
 # =======================
 # UGENE-style Consensus Logic with Updated Match Points
 # =======================
-from pathlib import Path
 import streamlit as st
+from pathlib import Path
 from Bio.Seq import Seq
-from Bio import pairwise2
+from io import StringIO
+import base64
 
-# ---------- Helper Functions ----------
-
-def reverse_complement(seq: str) -> str:
+def reverse_complement(seq):
     return str(Seq(seq).reverse_complement())
 
-def parse_fasta(fasta_text: str) -> dict:
-    lines = fasta_text.strip().splitlines()
+def find_first_last_match(s1, s3, match_length=6, mismatch_threshold=10):
+    first_match_index = -1
+    last_match_index = -1
+
+    # Find first match: left to right
+    for i in range(len(s1) - match_length + 1):
+        window_s1 = s1[i:i + match_length]
+        for j in range(len(s3) - match_length + 1):
+            if window_s1 == s3[j:j + match_length]:
+                first_match_index = i
+                break
+        if first_match_index != -1:
+            break
+
+    # Find last match: right to left
+    for i in range(len(s1) - match_length, -1, -1):
+        window_s1 = s1[i:i + match_length]
+        for j in range(len(s3) - match_length, -1, -1):
+            if window_s1 == s3[j:j + match_length]:
+                last_match_index = i + match_length - 1
+                break
+        if last_match_index != -1:
+            break
+
+    mismatches = -1
+    exceeds_threshold = False
+    if first_match_index != -1 and last_match_index != -1 and first_match_index < last_match_index:
+        region_s1 = s1[first_match_index:last_match_index + 1]
+        region_s3 = s3[first_match_index:last_match_index + 1]
+        mismatches = sum(1 for a, b in zip(region_s1, region_s3) if a != b)
+        if mismatches > mismatch_threshold:
+            exceeds_threshold = True
+
+    return first_match_index, last_match_index, mismatches, exceeds_threshold
+
+def compute_consensus(s1, s3, first, last):
+    if first == -1 or last == -1 or first >= last:
+        return ""
+    consensus_prefix = s1[:last + 1]
+    suffix_s3 = s3[last + 1:]
+    consensus_suffix = reverse_complement(suffix_s3).lower()
+    return consensus_prefix + consensus_suffix
+
+def parse_txt_fasta(content):
     seqs = {}
-    header = None
+    lines = content.strip().splitlines()
+    current_key = ""
     for line in lines:
         if line.startswith(">"):
-            header = line[1:].strip()
-            seqs[header] = ""
+            current_key = line[1:].strip()
+            seqs[current_key] = ""
         else:
-            seqs[header] += line.strip()
+            seqs[current_key] += line.strip()
     return seqs
 
-def ugene_style_consensus(forward: str, reverse: str, threshold: int):
-    s1 = forward.strip().replace("\n", "").upper()
-    s2 = reverse.strip().replace("\n", "").upper()
-    s2_rev = s2[::-1]
-    s3 = reverse_complement(s2)
+def download_link(content, filename, label):
+    b64 = base64.b64encode(content.encode()).decode()
+    href = f'<a href="data:file/txt;base64,{b64}" download="{filename}">{label}</a>'
+    return href
 
-    # Local alignment
-    alignments = pairwise2.align.localms(s1, s3, 2, -1, -5, -0.5)
-    if not alignments:
-        return "", s1, s2, s2_rev, s3, "", -1, -1, -1, "No alignment found.", "", "", ""
+# Streamlit App
 
-    best_alignment = alignments[0]
-    aligned_s1 = best_alignment.seqA
-    aligned_s3 = best_alignment.seqB
-    start = best_alignment.start
-    end = best_alignment.end
+st.title("IGHV Consensus Generator (UGENE-style Reverse-Complement Matching)")
 
-    aligned_s1_region = aligned_s1[start:end]
-    aligned_s3_region = aligned_s3[start:end]
-    mismatch_count = sum(1 for a, b in zip(aligned_s1_region, aligned_s3_region) if a != b)
-    match_line = ''.join('|' if a == b else ' ' for a, b in zip(aligned_s1, aligned_s3))
+st.markdown("### Section 1: Reverse Complement Matching with Threshold")
 
-    # Find first match point: 6-base exact match
-    first_match = -1
-    for i in range(len(s1) - 5):
-        if s1[i:i+6] == s3[i:i+6]:
-            first_match = i
-            break
+uploaded_file = st.file_uploader("Upload IGHV .txt file with forward and reverse reads", type=["txt"], key="txt_upload")
 
-    # Find last match point: where threshold-length window has mismatches ≥ threshold
-    last_match = -1
-    for i in range(len(s1) - threshold):
-        window_s1 = s1[i:i+threshold]
-        window_s3 = s3[i:i+threshold]
-        mismatches = sum(1 for a, b in zip(window_s1, window_s3) if a != b)
-        if mismatches >= threshold:
-            last_match = i + threshold - 1
-            break
-
-    a2 = s1[first_match:last_match+1] if first_match != -1 and last_match != -1 else ""
-    a1 = s1[:first_match].lower() if first_match != -1 else ""
-    a3 = s3[last_match+1:].lower() if last_match != -1 else ""
-    consensus = a1 + a2.upper() + a3
-
-    disclaimer = ""
-    if mismatch_count > threshold:
-        disclaimer = f"⚠️ Mismatches ({mismatch_count}) exceed threshold ({threshold})"
-
-    return consensus, s1, s2, s2_rev, s3, a2, first_match, last_match, mismatch_count, disclaimer, aligned_s1, match_line, aligned_s3
-
-# ---------- Streamlit App ----------
-
-st.set_page_config(page_title="IGHV Consensus Generator", layout="wide")
-st.title("🧬 IGHV UGENE-style Consensus Generator")
-
-st.markdown("### 🔹 Section 1: Generate Consensus")
-
-uploaded_file = st.file_uploader("Upload a TXT file (FASTA format with _F and _R reads)", type=["txt"])
-threshold = st.number_input("Mismatch Threshold (T)", min_value=1, max_value=50, value=10)
+T = st.number_input("Mismatch Threshold (T)", min_value=0, max_value=100, value=10)
 
 if uploaded_file:
-    content = uploaded_file.read().decode("utf-8")
-    seqs = parse_fasta(content)
+    content = uploaded_file.read().decode()
+    seqs = parse_txt_fasta(content)
+
     forward = next((v for k, v in seqs.items() if k.endswith("_F")), None)
     reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
 
     if forward and reverse:
-        consensus, s1, s2, s2_rev, s3, a2, first_match, last_match, mismatch_count, disclaimer, aligned_s1, match_line, aligned_s3 = ugene_style_consensus(forward, reverse, threshold)
+        s1 = forward.strip().replace("\n", "").upper()
+        s2 = reverse.strip().replace("\n", "").upper()
+        s2_rev = s2[::-1]
+        s3 = reverse_complement(s2)
 
-        st.subheader("🔍 Intermediate Results")
-        st.text_area("Forward Read (s1)", s1, height=100)
-        st.text_area("Reverse Read (s2)", s2, height=100)
-        st.text_area("Reverse of s2", s2_rev, height=100)
-        st.text_area("Reverse-Complement of s2 (s3)", s3, height=100)
-        st.text_area("Matched Region (a2)", a2, height=60)
+        first, last, mismatches, exceeds = find_first_last_match(s1, s3, match_length=6, mismatch_threshold=T)
+        consensus = compute_consensus(s1, s3, first, last)
 
-        st.write(f"🧭 First Match Point in IGHV_F: {first_match}")
-        st.write(f"🔚 Last Match Point in IGHV_F: {last_match}")
-        st.write(f"❌ Number of Mismatches in Alignment: {mismatch_count}")
-        if disclaimer:
-            st.warning(disclaimer)
+        st.subheader("Inputs and Intermediate Outputs")
+        st.text_area("IGHV_F (s1)", s1, height=100)
+        st.text_area("IGHV_R (s2)", s2, height=100)
+        st.text_area("Reverse of IGHV_R (s2_rev)", s2_rev, height=100)
+        st.text_area("Reverse-Complement of IGHV_R (s3)", s3, height=100)
 
-        st.subheader("🧩 Visual Alignment")
-        st.text("Aligned Forward Read (s1)")
-        st.code(aligned_s1)
-        st.text("Match Line")
-        st.code(match_line)
-        st.text("Aligned Reverse Complement (s3)")
-        st.code(aligned_s3)
+        st.write(f"**First Match Point in IGHV_F:** {first}")
+        st.write(f"**Last Match Point in IGHV_F:** {last}")
+        st.write(f"**Number of Mismatches:** {mismatches}")
 
-        st.subheader("✅ Final Consensus")
-        st.code(consensus, language="text")
+        if exceeds:
+            st.warning(f"Number of mismatches is {mismatches}, which exceeds the threshold = {T}")
+        elif first == -1 or last == -1:
+            st.error("No valid matching region found between s1 and reverse-complement of s2.")
+        else:
+            st.success("Consensus generated successfully.")
 
-        # Download button
-        output_file = Path(uploaded_file.name).with_suffix(".consensus.txt")
-        st.download_button("📥 Download Consensus", consensus, file_name=output_file.name, mime="text/plain")
+            st.subheader("Visual Alignment (UGENE-style)")
 
+            align_display = ""
+            for i in range(first, last + 1):
+                base1 = s1[i]
+                base2 = s3[i]
+                marker = "|" if base1 == base2 else "."
+                align_display += f"{base1} {marker} {base2}\n"
+            st.text(align_display)
+
+            st.subheader("Consensus Output")
+            st.text_area("Final Consensus", consensus, height=100)
+
+            filename = uploaded_file.name.replace(".txt", "_consensus.txt")
+            st.markdown(download_link(consensus, filename, "Download Consensus Output"), unsafe_allow_html=True)
+
+    else:
+        st.error("Could not find both forward (_F) and reverse (_R) sequences in uploaded file.")
+
+# Section 2: IGHV DOCX Report Generator (Unchanged from your existing code)
 st.markdown("---")
-st.markdown("### 🔹 Section 2: IGHV DOCX Report Generator")
-st.info("This section is unchanged and handles IGHV reporting.")
+st.markdown("### Section 2: IGHV DOCX Report Generator (Unchanged)")
+st.info("This section remains unchanged. Paste your existing logic below this line.")
+
 
 # =======================
 # Section 2: IGHV DOCX Report Generator
