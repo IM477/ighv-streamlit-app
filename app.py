@@ -20,20 +20,20 @@ def ugene_style_consensus(forward, reverse):
     forward = forward.replace("\n", "").upper()
     reverse_rc = reverse_complement(reverse.replace("\n", "").upper())
 
-    # Find longest suffix of reverse_rc that matches prefix of forward
     max_overlap = 0
-    for i in range(1, min(len(forward), len(reverse_rc)) + 1):
+    min_len = min(len(forward), len(reverse_rc))
+
+    # Find the longest suffix of reverse_rc that matches prefix of forward
+    for i in range(1, min_len + 1):
         if reverse_rc[-i:] == forward[:i]:
             max_overlap = i
 
-    # Construct consensus with lowercase non-overlap, uppercase overlap, lowercase tail
-    non_overlap = reverse_rc[:-max_overlap] if max_overlap > 0 else reverse_rc
-    overlap = reverse_rc[-max_overlap:] if max_overlap > 0 else ""
-    tail = forward[max_overlap:]
+    # Build consensus
+    non_overlap_prefix = reverse_rc[:-max_overlap].lower() if max_overlap > 0 else reverse_rc.lower()
+    overlap = reverse_rc[-max_overlap:].upper() if max_overlap > 0 else ""
+    forward_tail = forward[max_overlap:].lower() if max_overlap > 0 else forward.lower()
 
-    consensus = (
-        non_overlap.lower() + overlap.upper() + tail.lower()
-    )
+    consensus = non_overlap_prefix + overlap + forward_tail
     return consensus
 
 def parse_fasta(text):
