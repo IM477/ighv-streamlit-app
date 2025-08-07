@@ -1,179 +1,254 @@
 import streamlit as st
-from Bio.Seq import Seq
-import os
-import re
+from io import BytesIO
 from docx import Document
-from PyPDF2 import PdfReader
+import PyPDF2
+import re
+from datetime import datetime
 
-# =======================
-# UGENE-style Consensus Logic with Updated Match Points
-# =======================
-import streamlit as st
-from Bio.Seq import Seq
-from Bio import pairwise2
-from io import StringIO
+# ------------------------
+# UGENE-style Consensus Logic
+# ------------------------
 
-# Reverse complement function
+def reverse(seq):
+    return seq[::-1]
+
+def complement(seq):
+    return seq.translate(str.maketrans("ACGTacgt", "TGCAtgca"))
+
 def reverse_complement(seq):
-    return str(Seq(seq).reverse_complement())
+    return complement(reverse(seq))
 
-# Function to parse FASTA-style input
-def parse_fasta(txt):
-    records = {}
-    key = None
-    seq = []
-    for line in txt.strip().splitlines():
+def find_overlap_prefix_suffix(s1, s3):
+    """Return longest overlap where s1 starts with a suffix of s3"""
+    max_len = min(len(s1), len(s3))
+    for i in range(max_len, 0, -1):
+        if s1.startswith(s3[-i:]):
+            return s3[-i:], i
+    return "", 0
+
+def ugene_style_consensus(s1, s2):
+    s1 = s1.strip().replace("\n", "").upper()
+    s2 = s2.strip().replace("\n", "").upper()
+
+    s2_rev = reverse(s2)
+    s3 = reverse_complement(s2)
+
+    matching_str, match_len = find_overlap_prefix_suffix(s1, s3)
+
+    if match_len == 0:
+        return None, s1, s2, s2_rev, s3, "", ""
+
+    a1 = s1[match_len:].lower()
+    a2 = matching_str.upper()
+    unmatched_s3 = s3[:-match_len]  # the part of s3 not included in match
+    a3 = reverse_complement(unmatched_s3).lower()
+
+    consensus = a1 + a2 + a3
+    return consensus, s1, s2, s2_rev, s3, a2, a3
+
+def parse_fasta(text):
+    seqs = {}
+    current_label = None
+    for line in text.strip().splitlines():
         line = line.strip()
-        if line.startswith('>'):
-            if key and seq:
-                records[key] = ''.join(seq)
-            key = line[1:].strip()
-            seq = []
-        else:
-            seq.append(line)
-    if key and seq:
-        records[key] = ''.join(seq)
-    return records
+        if line.startswith(">"):
+            current_label = line[1:]
+            seqs[current_label] = ""
+        elif current_label:
+            seqs[current_label] += line.upper()
+    return seqs
 
-# Function to calculate alignment and match points
-def local_alignment_match_points(s1, s3, mismatch_threshold=10):
-    alignments = pairwise2.align.localms(s1, s3, 2, -1, -0.5, -0.1)
-    if not alignments:
-        return -1, -1, -1, "", "", True
+# ------------------------
+# IGHV PDF extraction
+# ------------------------
+def extract_from_pdf(pdf_bytes):
+    pdf_reader = PyPDF2.PdfReader(BytesIO(pdf_bytes))
+    text = "".join(page.extract_text() or "" for page in pdf_reader.pages)
 
-    best = alignments[0]
-    aligned_s1 = best.seqA
-    aligned_s3 = best.seqB
-    first = best.start
-    last = best.end - 1
-    mismatches = sum(1 for a, b in zip(aligned_s1, aligned_s3) if a != b)
+    gene_names_list = []
+    percent_identity_str = None
+    ratio_str = None
 
-    alignment_str = ""
-    for a, b in zip(aligned_s1, aligned_s3):
-        if a == b:
-            alignment_str += "|"
-        else:
-            alignment_str += " "
+    pattern_section = re.compile(r"Sequences\s+pr.*?alignmen", re.IGNORECASE | re.DOTALL)
+    section_match = pattern_section.search(text)
+    if section_match:
+        start_pos = section_match.end()
+        lines_after_section = text[start_pos:].strip().splitlines()
+        for line in lines_after_section:
+            for word in line.strip().split():
+                if word.startswith("IGHV"):
+                    gene_names_list.append(word)
+            if gene_names_list:
+                break
 
-    return first, last, mismatches, aligned_s1, aligned_s3, mismatches > mismatch_threshold
+    pattern_total = r"Total\s+(\d+)\s+(\d+)\s+\d+\s+\d+\s+([\d\.]+)"
+    match_total = re.search(pattern_total, text)
+    if match_total:
+        length = int(match_total.group(1))
+        matches = int(match_total.group(2))
+        identity = float(match_total.group(3))
+        percent_identity_str = f"{identity}%"
+        ratio_str = f"{matches}/{length}"
 
-# Streamlit app
-st.title("UGENE-Style Consensus Viewer with Alignment")
+    return gene_names_list, percent_identity_str, ratio_str
 
-uploaded_file = st.file_uploader("Upload TXT file (FASTA format)", type="txt")
+# ------------------------
+# DOCX Report Generator
+# ------------------------
+def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, template_bytes, sample_id_text):
+    gene_name_str = ", ".join(str(g).strip() for g in gene_names_list)
+    percent_identity = float(percent_identity_str.strip('%'))
+    mutation_percent = round(100 - percent_identity, 1)
+    mutation_percent_str = f"{mutation_percent}%"
 
-if uploaded_file:
-    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-    fasta_data = stringio.read()
-    sequences = parse_fasta(fasta_data)
-
-    forward_label = next((k for k in sequences if k.endswith("_F")), None)
-    reverse_label = next((k for k in sequences if k.endswith("_R")), None)
-
-    if forward_label and reverse_label:
-        s1 = sequences[forward_label].upper()
-        s2 = sequences[reverse_label].upper()
-        s3 = reverse_complement(s2)
-
-        first, last, mismatches, aligned_s1, aligned_s3, exceeds_threshold = local_alignment_match_points(s1, s3)
-
-        st.subheader("Input Sequences")
-        st.text_area("Forward Read (s1)", s1, height=150)
-        st.text_area("Reverse Read (s2)", s2, height=150)
-        st.text_area("Reverse Complement (s3)", s3, height=150)
-
-        st.subheader("Local Alignment")
-        if first != -1:
-            st.text("s1:\n" + aligned_s1)
-            st.text("   \n" + ''.join(['|' if a == b else ' ' for a, b in zip(aligned_s1, aligned_s3)]))
-            st.text("s3:\n" + aligned_s3)
-        else:
-            st.warning("No alignment found between forward and reverse-complement.")
-
-        st.subheader("Match Info")
-        st.write(f"**First Match Point in IGHV_F:** {first}")
-        st.write(f"**Last Match Point in IGHV_F:** {last}")
-        st.write(f"**Number of Mismatches:** {mismatches}")
-
-        if exceeds_threshold:
-            st.error("⚠️ Mismatch count exceeds threshold – review required.")
-        else:
-            st.success("✅ Mismatch count is within threshold.")
+    if any("3-21" in g for g in gene_names_list):
+        prognosis_text = (
+            "BAD\n"
+            "Note: CLL expressing the IGHV 3-21 variable region gene segment "
+            "have a poorer prognosis regardless of IGHV mutation status."
+        )
+        prognosis_single_line = prognosis_text
     else:
-        st.error("Could not find both _F and _R labeled sequences in the file.")
+        if mutation_percent < 2.0:
+            prognosis_text = "BAD"
+        elif 2.1 <= mutation_percent <= 3.0:
+            prognosis_text = "Borderline with intermediate clinical course"
+        else:
+            prognosis_text = "GOOD"
+        prognosis_single_line = prognosis_text
 
-# =======================
-# Section 2: IGHV DOCX Report Generator
-# =======================
-st.header("2. IGHV DOCX Report Generator")
+    doc = Document(BytesIO(template_bytes))
 
-pdf_file = st.file_uploader("Upload IgBLAST PDF", type=["pdf"])
-docx_template = st.file_uploader("Upload DOCX Template", type=["docx"])
-ab1_file = st.file_uploader("Upload AB1 Sequence File", type=["ab1"])
+    for section in doc.sections:
+        for para in section.header.paragraphs:
+            if "Sample ID" in para.text:
+                para.text = f"Sample ID: {sample_id_text}"
 
-def extract_text_from_pdf(pdf_file):
-    reader = PdfReader(pdf_file)
-    return "\n".join(page.extract_text() for page in reader.pages if page.extract_text())
+    for para in doc.paragraphs:
+        if "Sample ID" in para.text:
+            para.text = f"Sample ID: {sample_id_text}"
+        elif "Mutation detected:" in para.text:
+            para.text = f"Mutation detected: {mutation_percent_str}"
+        elif "Clinical Prognosis" in para.text:
+            idx = doc.paragraphs.index(para)
+            if idx + 1 < len(doc.paragraphs):
+                doc.paragraphs[idx + 1].text = prognosis_text
 
-def parse_ighv_info(text):
-    gene_names = re.findall(r"(IGHV\d+-\d+)", text)
-    percents = re.findall(r"(\d+\.\d+)% identity", text)
-    ratios = re.findall(r"\((\d+/\d+)\)", text)
-    return gene_names, percents, ratios
-
-def determine_prognosis(percent_identity, gene_name):
-    mutation_rate = 100 - float(percent_identity)
-    if "3-21" in gene_name:
-        return "BAD"
-    elif mutation_rate < 2:
-        return "BAD"
-    elif 2 <= mutation_rate <= 3:
-        return "Borderline"
-    else:
-        return "GOOD"
-
-def extract_sample_id(ab1_file):
-    return os.path.splitext(ab1_file.name)[0] if ab1_file else "Sample_ID"
-
-def replace_text_in_docx(doc, old, new):
-    for p in doc.paragraphs:
-        if old in p.text:
-            p.text = p.text.replace(old, new)
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                if old in cell.text:
-                    cell.text = cell.text.replace(old, new)
+                if "Sample ID" in cell.text:
+                    cell.text = f"Sample ID: {sample_id_text}"
+                elif "Mutation detected:" in cell.text:
+                    row.cells[1].text = mutation_percent_str
+                elif "Clinical Prognosis:" in cell.text:
+                    row.cells[1].text = prognosis_single_line
 
-if st.button("Generate IGHV DOCX Report"):
-    if pdf_file and docx_template and ab1_file:
-        text = extract_text_from_pdf(pdf_file)
-        gene_names, percents, ratios = parse_ighv_info(text)
-        if not gene_names or not percents:
-            st.error("Failed to extract IGHV info from PDF.")
+    for table in doc.tables:
+        first_row = [cell.text.strip() for cell in table.rows[0].cells]
+        if "Name" in first_row and "Percentage Identity Detected" in first_row:
+            for i in range(len(table.rows) - 1, 0, -1):
+                table._tbl.remove(table.rows[i]._tr)
+            row_cells = table.add_row().cells
+            row_cells[0].text = gene_name_str
+            row_cells[1].text = percent_identity_str
+            row_cells[2].text = mutation_percent_str
+            row_cells[3].text = ratio_str
+            break
+
+    output = BytesIO()
+    doc.save(output)
+    output.seek(0)
+    return output
+
+# ------------------------
+# STREAMLIT APP
+# ------------------------
+st.set_page_config(page_title="IGHV Report Generator", layout="centered")
+st.title("IGHV Report Generator")
+st.caption("*UGENE-style consensus generator + IGHV DOCX reporter*")
+
+# ------------------------
+# SECTION 1: Consensus Generator
+# ------------------------
+st.header("1. UGENE-style Consensus Generator")
+cap3_input_file = st.file_uploader("Upload FASTA File with Forward (_F) and Reverse (_R) Reads", type=["txt", "fasta"])
+
+if cap3_input_file:
+    content = cap3_input_file.read().decode("utf-8")
+    seqs = parse_fasta(content)
+    forward = next((v for k, v in seqs.items() if k.endswith("_F")), None)
+    reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
+
+    if forward and reverse:
+        consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse)
+
+        st.subheader("Inputs and Intermediates")
+        st.text_area("Forward Read (s1)", s1, height=100)
+        st.text_area("Reverse Read (s2)", s2, height=100)
+        st.text_area("Reverse of Reverse Read (s2 reversed)", s2_rev, height=100)
+        st.text_area("Reverse Complement of s2 (s3)", s3, height=100)
+        st.text_area("Matching Region (a2)", a2 or "No match found", height=50)
+
+        if consensus:
+            st.success("UGENE-style Consensus Generated")
+            st.code(consensus, language="text")
+
+            consensus_bytes = BytesIO(consensus.encode("utf-8"))
+            st.download_button(
+                label="Download Consensus (.txt)",
+                data=consensus_bytes,
+                file_name="consensus_output.txt",
+                mime="text/plain"
+            )
         else:
-            gene_name = gene_names[0]
-            percent = percents[0]
-            ratio = ratios[0] if ratios else ""
-            prognosis = determine_prognosis(percent, gene_name)
-            sample_id = extract_sample_id(ab1_file)
-
-            doc = Document(docx_template)
-            replace_text_in_docx(doc, "SAMPLE_ID", sample_id)
-            replace_text_in_docx(doc, "PERCENT", f"{percent}%")
-            replace_text_in_docx(doc, "PROGNOSIS", prognosis)
-
-            for table in doc.tables:
-                if table.cell(0, 0).text.strip().lower() == "gene":
-                    for i in range(1, len(table.rows)):
-                        table.cell(i, 0).text = ""
-                        table.cell(i, 1).text = ""
-                    table.cell(1, 0).text = gene_name
-                    table.cell(1, 1).text = f"{percent}% ({ratio})" if ratio else f"{percent}%"
-
-            output_docx = f"{sample_id}_IGHV_Report.docx"
-            doc.save(output_docx)
-            with open(output_docx, "rb") as f:
-                st.download_button("Download IGHV DOCX Report", f, file_name=output_docx)
+            st.warning("No match found. Manual intervention needed.")
     else:
-        st.error("Please upload all required files (PDF, DOCX, AB1)")
+        st.error("Could not find both _F and _R sequences in file.")
+
+# ------------------------
+# SECTION 2: IGHV Report Generator
+# ------------------------
+st.header("2. IGHV DOCX Report Generator")
+
+pdf_file = st.file_uploader("PDF file (IgBLAST results)", type="pdf")
+docx_template_file = st.file_uploader("Word Template (.docx)", type="docx")
+ab1_file = st.file_uploader(".ab1 Sequence File", type="ab1")
+
+if st.button("Generate IGHV Report"):
+    if pdf_file and docx_template_file and ab1_file:
+        ab1_filename = ab1_file.name
+        sample_id = ab1_filename.split("(")[0].strip()
+        date_str = datetime.now().strftime("%d-%m-%Y")
+        final_name = f"{sample_id} ({date_str})"
+        output_filename = f"{final_name}.docx"
+
+        st.info(f"Sample ID: {sample_id}")
+        st.info(f"Output file name: {output_filename}")
+
+        pdf_bytes = pdf_file.read()
+        gene_names_list, percent_identity_str, ratio_str = extract_from_pdf(pdf_bytes)
+
+        st.write("Gene Names:", gene_names_list)
+        st.write("Percent Identity:", percent_identity_str)
+        st.write("Ratio:", ratio_str)
+
+        if gene_names_list and percent_identity_str and ratio_str:
+            docx_bytes = generate_docx_report(
+                gene_names_list=gene_names_list,
+                percent_identity_str=percent_identity_str,
+                ratio_str=ratio_str,
+                template_bytes=docx_template_file.read(),
+                sample_id_text=final_name
+            )
+
+            st.download_button(
+                label="Download Report",
+                data=docx_bytes,
+                file_name=output_filename,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        else:
+            st.error("Could not extract all required fields from PDF.")
+    else:
+        st.warning("Please upload all three files before generating the report.")
