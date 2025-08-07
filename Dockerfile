@@ -1,28 +1,23 @@
-# Base image with Python
-FROM python:3.10-slim
+# Use official Python image
+FROM python:3.9-slim
 
-# Install system dependencies (CAP3, unzippers, etc.)
+# Install CAP3 and required system dependencies
 RUN apt-get update && \
-    apt-get install -y cap3 build-essential && \
+    apt-get install -y cap3 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Set work directory
 WORKDIR /app
 
-# Copy your app files into the image
+# Copy all files
 COPY . .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Streamlit-specific settings (disable browser auto open etc.)
-ENV STREAMLIT_SERVER_HEADLESS=true \
-    STREAMLIT_SERVER_PORT=8501 \
-    STREAMLIT_SERVER_ENABLECORS=false
-
-# Expose the port Streamlit runs on
+# Expose Streamlit port
 EXPOSE 8501
 
-# Run the Streamlit app
-CMD ["streamlit", "run", "app.py"]
+# Run the app
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
