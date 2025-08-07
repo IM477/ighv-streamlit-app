@@ -9,7 +9,7 @@ from datetime import datetime
 # UGENE-style Consensus Logic
 # ------------------------
 def reverse_complement(seq):
-    complement = str.maketrans("ACGTMRWSYKVHDBNacgtmrwsykvhdbn", "TGCANKYWSRMBDHVNtgcankywsrmbdhvn")
+    complement = str.maketrans("ACGTacgt", "TGCAtgca")
     return seq.translate(complement)[::-1]
 
 def ugene_style_consensus(fwd, rev):
