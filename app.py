@@ -7,47 +7,47 @@ from datetime import datetime
 from Bio import pairwise2
 
 # ------------------------
-# Consensus logic
+# UGENE-style Consensus Logic
 # ------------------------
+
 def reverse_complement(seq):
     complement = str.maketrans("ACGTacgt", "TGCAtgca")
     return seq.translate(complement)[::-1]
 
 def ugene_style_consensus(forward, reverse):
-    s1 = forward.replace("\n", "").upper()
-    s2 = reverse.replace("\n", "").upper()
+    s1 = forward.strip().replace("\n", "").upper()
+    s2 = reverse.strip().replace("\n", "").upper()
+    s2_rev = s2[::-1]
     s3 = reverse_complement(s2)
 
     alignments = pairwise2.align.localms(s1, s3, 2, -1, -5, -0.5)
-
     if not alignments:
-        return None  # No alignment found
+        return None, s1, s2, s2_rev, s3, ""
 
     best = alignments[0]
     aligned_s1, aligned_s3, score, start, end = best
 
-    # a1: unmatched prefix of forward (s1)
-    a1 = s1[:start].lower()
-
-    # a2: matched portion
-    a2 = ''
-    for b1, b2 in zip(aligned_s1, aligned_s3):
-        if b1 == b2 and b1 != '-':
-            a2 += b1.upper()
-        elif b1 == '-':
-            a2 += b2.lower()
-        elif b2 == '-':
-            a2 += b1.lower()
+    consensus = []
+    for b1, b3 in zip(aligned_s1, aligned_s3):
+        if b1 == b3 and b1 != "-":
+            consensus.append(b1.upper())
+        elif b3 == "-":
+            consensus.append(b1.lower())
+        elif b1 == "-":
+            consensus.append(b3.lower())
         else:
-            a2 += b1.lower()
+            consensus.append(b1.lower())  # mismatch
 
-    # a3: unmatched tail of reverse (s2) — calculate based on match in s3
-    match_len = len(aligned_s3.replace("-", ""))
-    tail_s3 = s3[end:]
-    tail_s2 = reverse_complement(tail_s3)
-    a3 = tail_s2.lower()
+    a1 = s1[:start].lower()
+    a2 = "".join(consensus)
+    a3_raw = s3[end:]
+    a3 = reverse_complement(a3_raw).lower()  # convert to s2 orientation
 
-    return a1 + a2 + a3
+    if not a2.strip():
+        return "NO_MATCH", s1, s2, s2_rev, s3, ""
+
+    s4 = a1 + a2 + a3
+    return s4, s1, s2, s2_rev, s3, a2
 
 def parse_fasta(text):
     seqs = {}
@@ -62,7 +62,7 @@ def parse_fasta(text):
     return seqs
 
 # ------------------------
-# IGHV PDF Extraction
+# IGHV PDF extraction
 # ------------------------
 def extract_from_pdf(pdf_bytes):
     pdf_reader = PyPDF2.PdfReader(BytesIO(pdf_bytes))
@@ -98,7 +98,13 @@ def extract_from_pdf(pdf_bytes):
 # ------------------------
 # DOCX Report Generator
 # ------------------------
-def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, template_bytes, sample_id_text):
+def generate_docx_report(
+    gene_names_list,
+    percent_identity_str,
+    ratio_str,
+    template_bytes,
+    sample_id_text
+):
     gene_name_str = ", ".join(str(g).strip() for g in gene_names_list)
     percent_identity = float(percent_identity_str.strip('%'))
     mutation_percent = round(100 - percent_identity, 1)
@@ -171,7 +177,9 @@ st.set_page_config(page_title="IGHV Report Generator", layout="centered")
 st.title("IGHV Report Generator")
 st.caption("*UGENE-style consensus generator + IGHV DOCX reporter*")
 
+# ------------------------
 # SECTION 1: Consensus Generator
+# ------------------------
 st.header("1. UGENE-style Consensus Generator")
 cap3_input_file = st.file_uploader("Upload FASTA File with Forward (_F) and Reverse (_R) Reads", type=["txt", "fasta"])
 
@@ -182,23 +190,33 @@ if cap3_input_file:
     reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
 
     if forward and reverse:
-        consensus = ugene_style_consensus(forward, reverse)
-        if consensus is None:
-            st.warning("No match found, manual intervention needed.")
+        result, s1, s2, s2_rev, s3, match = ugene_style_consensus(forward, reverse)
+
+        st.subheader("Inputs & Intermediate Steps")
+        st.code(f"Forward Read (s1):\n{s1}", language="text")
+        st.code(f"Reverse Read (s2):\n{s2}", language="text")
+        st.code(f"Reverse of s2:\n{s2_rev}", language="text")
+        st.code(f"Reverse Complement of s2 (s3):\n{s3}", language="text")
+
+        if result == "NO_MATCH":
+            st.error("⚠️ No matching region found. Manual intervention needed.")
         else:
+            st.code(f"Matching Region (uppercase in output):\n{match}", language="text")
             st.success("UGENE-style Consensus Generated")
-            st.code(consensus, language="text")
+            st.code(result, language="text")
 
             st.download_button(
                 label="Download Consensus (.txt)",
-                data=BytesIO(consensus.encode("utf-8")),
+                data=BytesIO(result.encode("utf-8")),
                 file_name="consensus_output.txt",
                 mime="text/plain"
             )
     else:
         st.error("Could not find both _F and _R sequences in file.")
 
+# ------------------------
 # SECTION 2: IGHV Report Generator
+# ------------------------
 st.header("2. IGHV DOCX Report Generator")
 
 pdf_file = st.file_uploader("PDF file (IgBLAST results)", type="pdf")
