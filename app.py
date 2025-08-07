@@ -33,19 +33,10 @@ def ugene_style_consensus(s1, s2):
     best = alignments[0]
     aligned_s1, aligned_s3, score, start, end = best
 
-    a2 = ""
-    match_start_s1 = start
-    match_end_s1 = end
-
-    # Extract a1 and a2 from s1
-    a1 = s1[:match_start_s1].lower()
-    a2 = s1[match_start_s1:match_end_s1].upper()
-
-    # Extract a3 from s3 that wasn't used in alignment (tail of s3)
-    s3_aligned_len = len(s3)
-    aligned_s3_segment = s3[match_start_s1:match_end_s1]
-    s3_suffix_unaligned = s3[match_end_s1:]
-    a3 = reverse_complement(s3_suffix_unaligned).lower()
+    a2 = s1[start:end].upper()
+    a1 = s1[:start].lower()
+    a3_raw = s3[end:]
+    a3 = reverse_complement(a3_raw).lower()
 
     s4 = a1 + a2 + a3
     return s4, s1, s2, s2_rev, s3, a2, a3
@@ -99,13 +90,7 @@ def extract_from_pdf(pdf_bytes):
 # ------------------------
 # DOCX Report Generator
 # ------------------------
-def generate_docx_report(
-    gene_names_list,
-    percent_identity_str,
-    ratio_str,
-    template_bytes,
-    sample_id_text
-):
+def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, template_bytes, sample_id_text):
     gene_name_str = ", ".join(str(g).strip() for g in gene_names_list)
     percent_identity = float(percent_identity_str.strip('%'))
     mutation_percent = round(100 - percent_identity, 1)
@@ -199,11 +184,11 @@ if cap3_input_file:
         st.text_area("Reverse of Reverse Read (s2 reversed)", s2_rev, height=100)
         st.text_area("Reverse Complement of s2 (s3)", s3, height=100)
         st.text_area("Matching Region (a2)", a2 or "No match found", height=50)
+        st.text_area("Unmatched Suffix from s2 (a3, in fwd orientation)", a3, height=50)
 
-        if consensus:
+        if a2:
             st.success("UGENE-style Consensus Generated")
             st.code(consensus, language="text")
-
             consensus_bytes = BytesIO(consensus.encode("utf-8"))
             st.download_button(
                 label="Download Consensus (.txt)",
@@ -212,12 +197,12 @@ if cap3_input_file:
                 mime="text/plain"
             )
         else:
-            st.warning("No overlap found. Manual intervention needed.")
+            st.warning("⚠️ No match found. Manual intervention needed.")
     else:
         st.error("Could not find both _F and _R sequences in file.")
 
 # ------------------------
-# SECTION 2: IGHV Report Generator (Unchanged)
+# SECTION 2: IGHV Report Generator
 # ------------------------
 st.header("2. IGHV DOCX Report Generator")
 
