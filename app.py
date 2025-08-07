@@ -18,15 +18,15 @@ def complement(seq):
 def reverse_complement(seq):
     return complement(reverse(seq))
 
-def find_overlap_prefix_suffix(s1, s3, tolerance):
-    """Return longest approximate match with up to `tolerance` mismatches"""
+def find_overlap_suffix_prefix(s1, s3, tolerance):
+    """Return longest approximate match between suffix of s1 and prefix of s3"""
     max_len = min(len(s1), len(s3))
     for i in range(max_len, 0, -1):
-        suffix = s3[-i:]
-        prefix = s1[:i]
-        mismatches = sum(1 for a, b in zip(prefix, suffix) if a != b)
+        suffix = s1[-i:]
+        prefix = s3[:i]
+        mismatches = sum(1 for a, b in zip(suffix, prefix) if a != b)
         if mismatches <= tolerance:
-            return suffix, i
+            return prefix, i
     return "", 0
 
 def ugene_style_consensus(s1, s2, tolerance=0):
@@ -36,14 +36,14 @@ def ugene_style_consensus(s1, s2, tolerance=0):
     s2_rev = reverse(s2)
     s3 = reverse_complement(s2)
 
-    matching_str, match_len = find_overlap_prefix_suffix(s1, s3, tolerance)
+    matching_str, match_len = find_overlap_suffix_prefix(s1, s3, tolerance)
 
     if match_len == 0:
         return None, s1, s2, s2_rev, s3, "", ""
 
-    a1 = s1[match_len:].lower()
+    a1 = s1[:-match_len].lower()
     a2 = matching_str.upper()
-    unmatched_s3 = s3[:-match_len]
+    unmatched_s3 = s3[match_len:]
     a3 = reverse_complement(unmatched_s3).lower()
 
     consensus = a1 + a2 + a3
@@ -60,6 +60,7 @@ def parse_fasta(text_data):
         elif current_label:
             sequences[current_label] += line.upper()
     return sequences
+
 
 # ------------------------
 # IGHV PDF extraction
