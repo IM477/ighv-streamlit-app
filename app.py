@@ -5,54 +5,49 @@ import PyPDF2
 import re
 from datetime import datetime
 from Bio import pairwise2
-from Bio.pairwise2 import format_alignment
 
 # ------------------------
-# UGENE-style Consensus Logic
+# Consensus logic
 # ------------------------
-def reverse_complement(seq):
-    complement = str.maketrans("ACGTacgt", "TGCAtgca")
-    return seq.translate(complement)[::-1]
-
-from Bio import pairwise2
-from Bio.pairwise2 import format_alignment
-
 def reverse_complement(seq):
     complement = str.maketrans("ACGTacgt", "TGCAtgca")
     return seq.translate(complement)[::-1]
 
 def ugene_style_consensus(forward, reverse):
-    forward = forward.replace("\n", "").upper()
-    reverse_rc = reverse_complement(reverse.replace("\n", "").upper())
+    s1 = forward.replace("\n", "").upper()
+    s2 = reverse.replace("\n", "").upper()
+    s3 = reverse_complement(s2)
 
-    # Local alignment between reverse_rc and forward
-    alignments = pairwise2.align.localms(reverse_rc, forward, 2, -1, -5, -0.5)
+    alignments = pairwise2.align.localms(s1, s3, 2, -1, -5, -0.5)
 
     if not alignments:
-        # No alignment: just join both
-        return reverse_rc.lower() + forward.lower()
+        return None  # No alignment found
 
     best = alignments[0]
-    aligned_rc, aligned_fwd, score, start, end = best
+    aligned_s1, aligned_s3, score, start, end = best
 
-    consensus = []
+    # a1: unmatched prefix of forward (s1)
+    a1 = s1[:start].lower()
 
-    for rc_base, fwd_base in zip(aligned_rc, aligned_fwd):
-        if rc_base == fwd_base and rc_base != "-":
-            consensus.append(rc_base.upper())  # Match
-        elif rc_base == "-":
-            consensus.append(fwd_base.lower())  # Insertion in forward
-        elif fwd_base == "-":
-            consensus.append(rc_base.lower())  # Insertion in reverse
+    # a2: matched portion
+    a2 = ''
+    for b1, b2 in zip(aligned_s1, aligned_s3):
+        if b1 == b2 and b1 != '-':
+            a2 += b1.upper()
+        elif b1 == '-':
+            a2 += b2.lower()
+        elif b2 == '-':
+            a2 += b1.lower()
         else:
-            consensus.append(rc_base.lower())  # Mismatch, choose reverse base in lowercase
+            a2 += b1.lower()
 
-    # Remaining tails from forward read (after aligned portion)
-    rc_unaligned = reverse_rc[:start].lower()
-    fwd_unaligned = forward[end:].lower()
+    # a3: unmatched tail of reverse (s2) — calculate based on match in s3
+    match_len = len(aligned_s3.replace("-", ""))
+    tail_s3 = s3[end:]
+    tail_s2 = reverse_complement(tail_s3)
+    a3 = tail_s2.lower()
 
-    final_consensus = rc_unaligned + "".join(consensus) + fwd_unaligned
-    return final_consensus
+    return a1 + a2 + a3
 
 def parse_fasta(text):
     seqs = {}
@@ -67,7 +62,7 @@ def parse_fasta(text):
     return seqs
 
 # ------------------------
-# IGHV PDF extraction
+# IGHV PDF Extraction
 # ------------------------
 def extract_from_pdf(pdf_bytes):
     pdf_reader = PyPDF2.PdfReader(BytesIO(pdf_bytes))
@@ -103,13 +98,7 @@ def extract_from_pdf(pdf_bytes):
 # ------------------------
 # DOCX Report Generator
 # ------------------------
-def generate_docx_report(
-    gene_names_list,
-    percent_identity_str,
-    ratio_str,
-    template_bytes,
-    sample_id_text
-):
+def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, template_bytes, sample_id_text):
     gene_name_str = ", ".join(str(g).strip() for g in gene_names_list)
     percent_identity = float(percent_identity_str.strip('%'))
     mutation_percent = round(100 - percent_identity, 1)
@@ -182,9 +171,7 @@ st.set_page_config(page_title="IGHV Report Generator", layout="centered")
 st.title("IGHV Report Generator")
 st.caption("*UGENE-style consensus generator + IGHV DOCX reporter*")
 
-# ------------------------
 # SECTION 1: Consensus Generator
-# ------------------------
 st.header("1. UGENE-style Consensus Generator")
 cap3_input_file = st.file_uploader("Upload FASTA File with Forward (_F) and Reverse (_R) Reads", type=["txt", "fasta"])
 
@@ -196,23 +183,22 @@ if cap3_input_file:
 
     if forward and reverse:
         consensus = ugene_style_consensus(forward, reverse)
-        st.success("UGENE-style Consensus Generated")
-        st.code(consensus, language="text")
+        if consensus is None:
+            st.warning("No match found, manual intervention needed.")
+        else:
+            st.success("UGENE-style Consensus Generated")
+            st.code(consensus, language="text")
 
-        # Download button
-        consensus_bytes = BytesIO(consensus.encode("utf-8"))
-        st.download_button(
-            label="Download Consensus (.txt)",
-            data=consensus_bytes,
-            file_name="consensus_output.txt",
-            mime="text/plain"
-        )
+            st.download_button(
+                label="Download Consensus (.txt)",
+                data=BytesIO(consensus.encode("utf-8")),
+                file_name="consensus_output.txt",
+                mime="text/plain"
+            )
     else:
         st.error("Could not find both _F and _R sequences in file.")
 
-# ------------------------
 # SECTION 2: IGHV Report Generator
-# ------------------------
 st.header("2. IGHV DOCX Report Generator")
 
 pdf_file = st.file_uploader("PDF file (IgBLAST results)", type="pdf")
