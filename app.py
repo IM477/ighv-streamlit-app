@@ -49,17 +49,17 @@ def ugene_style_consensus(s1, s2, tolerance=0):
     consensus = a1 + a2 + a3
     return consensus, s1, s2, s2_rev, s3, a2, a3
 
-def parse_fasta(text):
-    seqs = {}
+def parse_fasta(text_data):
+    sequences = {}
     current_label = None
-    for line in text.strip().splitlines():
+    for line in text_data.strip().splitlines():
         line = line.strip()
         if line.startswith(">"):
             current_label = line[1:]
-            seqs[current_label] = ""
+            sequences[current_label] = ""
         elif current_label:
-            seqs[current_label] += line.upper()
-    return seqs
+            sequences[current_label] += line.upper()
+    return sequences
 
 # ------------------------
 # IGHV PDF extraction
@@ -181,14 +181,14 @@ st.caption("*UGENE-style consensus generator + IGHV DOCX reporter*")
 st.header("1. UGENE-style Consensus Generator")
 cap3_input_file = st.file_uploader("Upload FASTA File with Forward (_F) and Reverse (_R) Reads", type=["txt", "fasta"])
 
-# 👇 New tolerance input
+# 👇 Tolerance input
 tolerance_limit = st.number_input("Mismatch Tolerance (Max mismatches allowed in overlap)", min_value=0, max_value=10, value=0, step=1)
 
 if cap3_input_file:
     content = cap3_input_file.read().decode("utf-8")
-    seqs = parse_fasta(content)
-    forward = next((v for k, v in seqs.items() if k.endswith("_F")), None)
-    reverse = next((v for k, v in seqs.items() if k.endswith("_R")), None)
+    sequences = parse_fasta(content)
+    forward = next((v for k, v in sequences.items() if k.endswith("_F")), None)
+    reverse = next((v for k, v in sequences.items() if k.endswith("_R")), None)
 
     if forward and reverse:
         consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse, tolerance=tolerance_limit)
