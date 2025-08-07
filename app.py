@@ -10,7 +10,7 @@ from pathlib import Path
 import os
 
 # ============================================================
-# CAP3 Consensus Function
+# CAP3 Function
 # ============================================================
 def run_cap3_and_get_consensus(raw_txt):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -18,7 +18,7 @@ def run_cap3_and_get_consensus(raw_txt):
         with open(input_path, "wb") as f:
             f.write(raw_txt)
 
-        result = subprocess.run(
+        subprocess.run(
             ["cap3", str(input_path)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -44,16 +44,14 @@ def run_cap3_and_get_consensus(raw_txt):
 
         return (consensus.strip(), None) if consensus else (None, "No consensus found in .ace")
 
-
 # ============================================================
-# PDF Parser
+# IGHV PDF Parser
 # ============================================================
 def extract_from_pdf(pdf_bytes):
     pdf_reader = PyPDF2.PdfReader(BytesIO(pdf_bytes))
     text = ""
     for page in pdf_reader.pages:
-        page_text = page.extract_text()
-        text += "\n" + page_text
+        text += "\n" + page.extract_text()
 
     gene_names_list = []
     percent_identity_str = None
@@ -65,13 +63,8 @@ def extract_from_pdf(pdf_bytes):
         start_pos = section_match.end()
         remaining_text = text[start_pos:]
         lines_after_section = remaining_text.strip().splitlines()
-
         for line in lines_after_section:
-            raw_line = line.strip()
-            if not raw_line:
-                continue
-
-            words = raw_line.split()
+            words = line.strip().split()
             for word in words:
                 if word.startswith("IGHV"):
                     gene_names_list.append(word)
@@ -89,9 +82,8 @@ def extract_from_pdf(pdf_bytes):
 
     return gene_names_list, percent_identity_str, ratio_str
 
-
 # ============================================================
-# DOCX Report Generator
+# IGHV DOCX Report Generator
 # ============================================================
 def generate_docx_report(
     gene_names_list,
@@ -101,50 +93,31 @@ def generate_docx_report(
     sample_id_text,
     consensus_sequence=None
 ):
-    gene_name_str = ", ".join(str(g).strip() for g in gene_names_list)
+    gene_name_str = ", ".join(gene_names_list)
     percent_identity = float(percent_identity_str.strip('%'))
     mutation_percent = round(100 - percent_identity, 1)
     mutation_percent_str = f"{mutation_percent}%"
 
     if any("3-21" in g for g in gene_names_list):
-        prognosis_text = (
-            "BAD\n"
-            "Note: CLL expressing the IGHV 3-21 variable region gene segment "
-            "have a poorer prognosis regardless of IGHV mutation status."
-        )
-        prognosis_single_line = prognosis_text
+        prognosis_text = "BAD\nNote: IGHV 3-21 has poor prognosis regardless of mutation."
+        prognosis_single_line = "BAD"
+    elif mutation_percent < 2.0:
+        prognosis_text = prognosis_single_line = "BAD"
+    elif 2.1 <= mutation_percent <= 3.0:
+        prognosis_text = prognosis_single_line = "Borderline with intermediate clinical course"
     else:
-        if mutation_percent < 2.0:
-            prognosis_text = "BAD"
-            prognosis_single_line = "BAD"
-        elif 2.1 <= mutation_percent <= 3.0:
-            prognosis_text = "Borderline with intermediate clinical course"
-            prognosis_single_line = "Borderline with intermediate clinical course"
-        else:
-            prognosis_text = "GOOD"
-            prognosis_single_line = "GOOD"
+        prognosis_text = prognosis_single_line = "GOOD"
 
     doc = Document(BytesIO(template_bytes))
 
-    if sample_id_text:
-        for section in doc.sections:
-            header = section.header
-            for para in header.paragraphs:
-                if "Sample ID" in para.text:
-                    para.text = f"Sample ID: {sample_id_text}"
-
-    if sample_id_text:
-        for para in doc.paragraphs:
+    for section in doc.sections:
+        for para in section.header.paragraphs:
             if "Sample ID" in para.text:
                 para.text = f"Sample ID: {sample_id_text}"
 
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                if "Sample ID" in cell.text:
-                    cell.text = f"Sample ID: {sample_id_text}"
-
     for para in doc.paragraphs:
+        if "Sample ID" in para.text:
+            para.text = f"Sample ID: {sample_id_text}"
         if "Mutation detected:" in para.text:
             para.text = f"Mutation detected: {mutation_percent_str}"
         if "Clinical Prognosis" in para.text:
@@ -155,26 +128,25 @@ def generate_docx_report(
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
+                if "Sample ID" in cell.text:
+                    cell.text = f"Sample ID: {sample_id_text}"
                 if "Mutation detected:" in cell.text:
                     row.cells[1].text = mutation_percent_str
                 if "Clinical Prognosis:" in cell.text:
                     row.cells[1].text = prognosis_single_line
 
-    for table in doc.tables:
-        first_row = [cell.text.strip() for cell in table.rows[0].cells]
-        if "Name" in first_row and "Percentage Identity Detected" in first_row:
-            if len(table.rows) > 1:
-                for i in range(len(table.rows) - 1, 0, -1):
-                    table._tbl.remove(table.rows[i]._tr)
+        headers = [cell.text.strip() for cell in table.rows[0].cells]
+        if "Name" in headers and "Percentage Identity Detected" in headers:
+            for i in range(len(table.rows) - 1, 0, -1):
+                table._tbl.remove(table.rows[i]._tr)
             row_cells = table.add_row().cells
             row_cells[0].text = gene_name_str
             row_cells[1].text = percent_identity_str
             row_cells[2].text = mutation_percent_str
             row_cells[3].text = ratio_str
-            break
 
     if consensus_sequence:
-        doc.add_paragraph("\nConsensus Sequence from CAP3:")
+        doc.add_paragraph("Consensus Sequence (CAP3):")
         doc.add_paragraph(consensus_sequence)
 
     output = BytesIO()
@@ -182,43 +154,56 @@ def generate_docx_report(
     output.seek(0)
     return output
 
-
 # ============================================================
-# STREAMLIT UI
+# STREAMLIT APP
 # ============================================================
 st.set_page_config(page_title="IGHV Report Generator", layout="centered")
 st.title("IGHV Report Generator")
 st.caption("*A Wobble Base Bioresearch proprietary software*")
 
-pdf_file = st.file_uploader("PDF file (IgBLAST results)", type="pdf")
-docx_template_file = st.file_uploader("Word Template (.docx)", type="docx")
-ab1_file = st.file_uploader(".ab1 Sequence File", type="ab1")
-cap3_sequence_txt = st.file_uploader("Sequence file for CAP3 (.txt, FASTA format)", type="txt")
+# ------------------ SECTION 1: CAP3 STANDALONE ------------------
+st.header("🧬 CAP3 Consensus Generator (UGENE-style)")
+cap3_input_file = st.file_uploader("Upload FASTA (.txt) with 2 reads", type=["txt"], key="cap3")
+
+if cap3_input_file:
+    if st.button("Generate Consensus from CAP3"):
+        consensus, error = run_cap3_and_get_consensus(cap3_input_file.read())
+        if consensus:
+            st.success("Consensus generated successfully.")
+            st.code(consensus, language="text")
+
+            # Prepare downloadable .txt file
+            cap3_output = BytesIO()
+            cap3_output.write(consensus.encode())
+            cap3_output.seek(0)
+
+            st.download_button(
+                label="Download Consensus (.txt)",
+                data=cap3_output,
+                file_name="cap3_consensus.txt",
+                mime="text/plain"
+            )
+        else:
+            st.error(f"CAP3 failed: {error}")
+
+st.markdown("---")
+
+# ------------------ SECTION 2: IGHV REPORT GENERATOR ------------------
+st.header("🧾 IGHV Mutation Report Generator")
+
+pdf_file = st.file_uploader("Upload IgBLAST PDF", type="pdf")
+docx_template_file = st.file_uploader("Upload Word Template (.docx)", type="docx")
+ab1_file = st.file_uploader("Upload .ab1 Sequence File", type="ab1")
 
 if st.button("Generate Report"):
-    if pdf_file and docx_template_file and ab1_file and cap3_sequence_txt:
-        ab1_filename = ab1_file.name
-        sample_id = ab1_filename.split("(")[0].strip()
+    if pdf_file and docx_template_file and ab1_file:
+        sample_id = ab1_file.name.split("(")[0].strip()
         date_str = datetime.now().strftime("%d-%m-%Y")
         final_name = f"{sample_id} ({date_str})"
         output_filename = f"{final_name}.docx"
 
-        st.info(f"Sample ID: {sample_id}")
-        st.info(f"Output file name: {output_filename}")
-
         pdf_bytes = pdf_file.read()
         gene_names_list, percent_identity_str, ratio_str = extract_from_pdf(pdf_bytes)
-
-        st.write("Gene Names:", gene_names_list)
-        st.write("Percent Identity:", percent_identity_str)
-        st.write("Ratio:", ratio_str)
-
-        consensus, cap3_error = run_cap3_and_get_consensus(cap3_sequence_txt.read())
-        if consensus:
-            st.success("CAP3 consensus generated.")
-            st.code(consensus)
-        else:
-            st.warning(f"CAP3 consensus not generated: {cap3_error}")
 
         if gene_names_list and percent_identity_str and ratio_str:
             docx_bytes = generate_docx_report(
@@ -226,12 +211,11 @@ if st.button("Generate Report"):
                 percent_identity_str=percent_identity_str,
                 ratio_str=ratio_str,
                 template_bytes=docx_template_file.read(),
-                sample_id_text=final_name,
-                consensus_sequence=consensus
+                sample_id_text=final_name
             )
 
             st.download_button(
-                label="Download Report",
+                label="Download Report (.docx)",
                 data=docx_bytes,
                 file_name=output_filename,
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -239,4 +223,4 @@ if st.button("Generate Report"):
         else:
             st.error("Could not extract required fields from PDF.")
     else:
-        st.warning("Please upload all four required files.")
+        st.warning("Please upload all three required files.")
