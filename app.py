@@ -4,6 +4,8 @@ from docx import Document
 import PyPDF2
 import re
 from datetime import datetime
+from Bio import pairwise2
+from Bio.pairwise2 import format_alignment
 
 # ------------------------
 # UGENE-style Consensus Logic
@@ -12,29 +14,45 @@ def reverse_complement(seq):
     complement = str.maketrans("ACGTacgt", "TGCAtgca")
     return seq.translate(complement)[::-1]
 
-def ugene_style_consensus(forward, reverse):
-    def reverse_complement(seq):
-        complement = str.maketrans("ACGTacgt", "TGCAtgca")
-        return seq.translate(complement)[::-1]
+from Bio import pairwise2
+from Bio.pairwise2 import format_alignment
 
+def reverse_complement(seq):
+    complement = str.maketrans("ACGTacgt", "TGCAtgca")
+    return seq.translate(complement)[::-1]
+
+def ugene_style_consensus(forward, reverse):
     forward = forward.replace("\n", "").upper()
     reverse_rc = reverse_complement(reverse.replace("\n", "").upper())
 
-    max_overlap = 0
-    min_len = min(len(forward), len(reverse_rc))
+    # Local alignment between reverse_rc and forward
+    alignments = pairwise2.align.localms(reverse_rc, forward, 2, -1, -5, -0.5)
 
-    # Find the longest suffix of reverse_rc that matches prefix of forward
-    for i in range(1, min_len + 1):
-        if reverse_rc[-i:] == forward[:i]:
-            max_overlap = i
+    if not alignments:
+        # No alignment: just join both
+        return reverse_rc.lower() + forward.lower()
 
-    # Build consensus
-    non_overlap_prefix = reverse_rc[:-max_overlap].lower() if max_overlap > 0 else reverse_rc.lower()
-    overlap = reverse_rc[-max_overlap:].upper() if max_overlap > 0 else ""
-    forward_tail = forward[max_overlap:].lower() if max_overlap > 0 else forward.lower()
+    best = alignments[0]
+    aligned_rc, aligned_fwd, score, start, end = best
 
-    consensus = non_overlap_prefix + overlap + forward_tail
-    return consensus
+    consensus = []
+
+    for rc_base, fwd_base in zip(aligned_rc, aligned_fwd):
+        if rc_base == fwd_base and rc_base != "-":
+            consensus.append(rc_base.upper())  # Match
+        elif rc_base == "-":
+            consensus.append(fwd_base.lower())  # Insertion in forward
+        elif fwd_base == "-":
+            consensus.append(rc_base.lower())  # Insertion in reverse
+        else:
+            consensus.append(rc_base.lower())  # Mismatch, choose reverse base in lowercase
+
+    # Remaining tails from forward read (after aligned portion)
+    rc_unaligned = reverse_rc[:start].lower()
+    fwd_unaligned = forward[end:].lower()
+
+    final_consensus = rc_unaligned + "".join(consensus) + fwd_unaligned
+    return final_consensus
 
 def parse_fasta(text):
     seqs = {}
