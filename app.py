@@ -19,14 +19,20 @@ def reverse_complement(seq):
     return complement(reverse(seq))
 
 def find_overlap_suffix_prefix(s1, s3, tolerance):
-    """Return longest approximate match between suffix of s1 and prefix of s3"""
+    """Return longest approximate match between suffix of s1 and prefix of s3,
+    building matched string using forward read's base on mismatch."""
     max_len = min(len(s1), len(s3))
     for i in range(max_len, 0, -1):
         suffix = s1[-i:]
         prefix = s3[:i]
         mismatches = sum(1 for a, b in zip(suffix, prefix) if a != b)
         if mismatches <= tolerance:
-            return prefix, i
+            # Build a2 with forward preference
+            match_chars = [
+                a if a == b else a  # prefer forward read's base on mismatch
+                for a, b in zip(suffix, prefix)
+            ]
+            return "".join(match_chars), i
     return "", 0
 
 def ugene_style_consensus(s1, s2, tolerance=0):
