@@ -121,7 +121,7 @@ def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, templ
         )
         prognosis_single_line = prognosis_text
     else:
-        if mutation_percent < 2.0:
+        if mutation_percent <= 2.0:
             prognosis_text = "BAD"
         elif 2.1 <= mutation_percent <= 3.0:
             prognosis_text = "Borderline with intermediate clinical course"
@@ -179,7 +179,7 @@ def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, templ
 
 st.set_page_config(page_title="IGHV Report Generator", layout="centered")
 st.title("IGHV Report Generator")
-st.caption("*UGENE-style consensus generator + IGHV DOCX reporter*")
+st.caption("*A Wobble Base Bioresearch proprietary software*")
 
 # ------------------------
 # SECTION 1: Consensus Generator
