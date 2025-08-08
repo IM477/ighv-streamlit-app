@@ -189,7 +189,7 @@ st.header("1. UGENE-style Consensus Generator")
 cap3_input_file = st.file_uploader("Upload FASTA File with Forward (_F) and Reverse (_R) Reads", type=["txt", "fasta"])
 
 # 👇 Tolerance input
-tolerance_limit = st.number_input("Mismatch Tolerance (Max mismatches allowed in overlap)", min_value=0, max_value=10, value=0, step=1)
+tolerance_limit = st.number_input("Mismatch Tolerance (Max mismatches allowed in overlap)", min_value=0, max_value=100, value=0, step=1)
 
 if cap3_input_file:
     content = cap3_input_file.read().decode("utf-8")
