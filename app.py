@@ -87,21 +87,18 @@ def biopython_consensus(forward, reverse):
     if not alignments:
         return None, forward, reverse_complement_seq
 
-    best_alignment = alignments[0]
-    seq1 = best_alignment.aligned[0]
-    seq2 = best_alignment.aligned[1]
+    best_alignment = alignments[0]  # best alignment from the alignments
+    seq1 = best_alignment[0]  # First sequence (forward read)
+    seq2 = best_alignment[1]  # Second sequence (reverse complement)
 
     consensus = []
-    for i in range(len(best_alignment.seqA)):
-        base1 = best_alignment.seqA[i]
-        base2 = best_alignment.seqB[i]
+    for base1, base2 in zip(seq1, seq2):
         if base1 == base2:
             consensus.append(base1)
         elif base1 == "-" or base2 == "-":
             consensus.append(base1 if base2 == "-" else base2)
         else:
-            # Choose forward read base (or 'N' to indicate mismatch)
-            consensus.append(base1)
+            consensus.append(base1)  # Prefer the base from the forward read
 
     return "".join(consensus), forward, reverse_complement_seq
 
