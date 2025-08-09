@@ -239,10 +239,10 @@ st.header("1. Consensus Generator")
 cap3_input_file = st.file_uploader("Upload FASTA File with Forward (_F) and Reverse (_R) Reads", type=["txt", "fasta"])
 
 # 👇 New: Select consensus method
-consensus_method = st.radio("Choose Consensus Method", options=["UGENE-style", "Biopython Alignment"])
+consensus_method = st.radio("Choose Consensus Method", options=["Contig generation IM1", "Contig generation IM2"])
 
 # 👇 Tolerance input (UGENE only)
-if consensus_method == "UGENE-style":
+if consensus_method == "Contig generation IM1":
     tolerance_limit = st.number_input("Mismatch Tolerance (Max mismatches allowed in overlap)", min_value=0, max_value=100, value=0, step=1)
 
 if cap3_input_file:
@@ -252,7 +252,7 @@ if cap3_input_file:
     reverse_seq = next((v for k, v in sequences.items() if k.endswith("_R")), None)
 
     if forward and reverse_seq:
-        if consensus_method == "UGENE-style":
+        if consensus_method == "Contig generation IM1":
             consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse_seq, tolerance=tolerance_limit)
         else:
             consensus, s1, s2 = biopython_consensus(forward, reverse_seq)
