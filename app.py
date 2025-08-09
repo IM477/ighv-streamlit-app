@@ -76,31 +76,44 @@ def parse_fasta(text_data):
 # ------------------------
 
 def biopython_consensus(forward, reverse):
-    """Generate consensus using Biopython global alignment."""
+    """Generate consensus using BioPython alignment with UGENE-style merge rules."""
     forward = forward.strip().replace("\n", "").upper()
+    reverse = reverse.strip().replace("\n", "").upper()
     reverse_complement_seq = str(Seq(reverse).reverse_complement())
 
+    # Global alignment so both full sequences are considered
     aligner = Align.PairwiseAligner()
     aligner.mode = 'global'
-    alignments = aligner.align(forward, reverse_complement_seq)
+    aligner.match_score = 2       # Match reward
+    aligner.mismatch_score = -1   # Mismatch penalty
+    aligner.open_gap_score = -2
+    aligner.extend_gap_score = -0.5
 
+    alignments = aligner.align(forward, reverse_complement_seq)
     if not alignments:
         return None, forward, reverse_complement_seq
 
-    best_alignment = alignments[0]  # best alignment from the alignments
-    seq1 = best_alignment[0]  # First sequence (forward read)
-    seq2 = best_alignment[1]  # Second sequence (reverse complement)
+    # Take the best alignment
+    best_alignment = alignments[0]
+    seq1 = str(best_alignment[0])  # aligned forward
+    seq2 = str(best_alignment[1])  # aligned reverse complement
 
     consensus = []
     for base1, base2 in zip(seq1, seq2):
         if base1 == base2:
             consensus.append(base1)
-        elif base1 == "-" or base2 == "-":
-            consensus.append(base1 if base2 == "-" else base2)
+        elif base1 == "-":  # gap in forward → take reverse base
+            consensus.append(base2)
+        elif base2 == "-":  # gap in reverse → take forward base
+            consensus.append(base1)
         else:
-            consensus.append(base1)  # Prefer the base from the forward read
+            # UGENE-style: prefer forward read on mismatch
+            consensus.append(base1)
 
-    return "".join(consensus), forward, reverse_complement_seq
+    # Remove gaps from final consensus
+    consensus_seq = "".join(consensus).replace("-", "")
+
+    return consensus_seq, forward, reverse_complement_seq
 
 
 # ------------------------
