@@ -4,6 +4,9 @@ from docx import Document
 import PyPDF2
 import re
 from datetime import datetime
+from Bio import Align
+from Bio.Seq import Seq
+
 
 # ------------------------
 # UGENE-style Consensus Logic with Tolerance
@@ -69,6 +72,41 @@ def parse_fasta(text_data):
 
 
 # ------------------------
+# Biopython Consensus Logic
+# ------------------------
+
+def biopython_consensus(forward, reverse):
+    """Generate consensus using Biopython global alignment."""
+    forward = forward.strip().replace("\n", "").upper()
+    reverse_complement_seq = str(Seq(reverse).reverse_complement())
+
+    aligner = Align.PairwiseAligner()
+    aligner.mode = 'global'
+    alignments = aligner.align(forward, reverse_complement_seq)
+
+    if not alignments:
+        return None, forward, reverse_complement_seq
+
+    best_alignment = alignments[0]
+    seq1 = best_alignment.aligned[0]
+    seq2 = best_alignment.aligned[1]
+
+    consensus = []
+    for i in range(len(best_alignment.seqA)):
+        base1 = best_alignment.seqA[i]
+        base2 = best_alignment.seqB[i]
+        if base1 == base2:
+            consensus.append(base1)
+        elif base1 == "-" or base2 == "-":
+            consensus.append(base1 if base2 == "-" else base2)
+        else:
+            # Choose forward read base (or 'N' to indicate mismatch)
+            consensus.append(base1)
+
+    return "".join(consensus), forward, reverse_complement_seq
+
+
+# ------------------------
 # IGHV PDF extraction
 # ------------------------
 
@@ -102,6 +140,7 @@ def extract_from_pdf(pdf_bytes):
         ratio_str = f"{matches}/{length}"
 
     return gene_names_list, percent_identity_str, ratio_str
+
 
 # ------------------------
 # DOCX Report Generator
@@ -173,6 +212,7 @@ def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, templ
     output.seek(0)
     return output
 
+
 # ------------------------
 # STREAMLIT APP
 # ------------------------
@@ -185,11 +225,15 @@ st.caption("*A Wobble Base Bioresearch proprietary software*")
 # SECTION 1: Consensus Generator
 # ------------------------
 
-st.header("1. UGENE-style Consensus Generator")
+st.header("1. Consensus Generator")
 cap3_input_file = st.file_uploader("Upload FASTA File with Forward (_F) and Reverse (_R) Reads", type=["txt", "fasta"])
 
-# 👇 Tolerance input
-tolerance_limit = st.number_input("Mismatch Tolerance (Max mismatches allowed in overlap)", min_value=0, max_value=100, value=0, step=1)
+# 👇 New: Select consensus method
+consensus_method = st.radio("Choose Consensus Method", options=["UGENE-style", "Biopython Alignment"])
+
+# 👇 Tolerance input (UGENE only)
+if consensus_method == "UGENE-style":
+    tolerance_limit = st.number_input("Mismatch Tolerance (Max mismatches allowed in overlap)", min_value=0, max_value=100, value=0, step=1)
 
 if cap3_input_file:
     content = cap3_input_file.read().decode("utf-8")
@@ -198,17 +242,17 @@ if cap3_input_file:
     reverse_seq = next((v for k, v in sequences.items() if k.endswith("_R")), None)
 
     if forward and reverse_seq:
-        consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse_seq, tolerance=tolerance_limit)
+        if consensus_method == "UGENE-style":
+            consensus, s1, s2, s2_rev, s3, a2, a3 = ugene_style_consensus(forward, reverse_seq, tolerance=tolerance_limit)
+        else:
+            consensus, s1, s2 = biopython_consensus(forward, reverse_seq)
 
         st.subheader("Inputs and Intermediates")
         st.text_area("Forward Read (s1)", s1, height=100)
         st.text_area("Reverse Read (s2)", s2, height=100)
-        st.text_area("Reverse of Reverse Read (s2 reversed)", s2_rev, height=100)
-        st.text_area("Reverse Complement of s2 (s3)", s3, height=100)
-        st.text_area("Matching Region (a2)", a2 or "No match found", height=50)
 
         if consensus:
-            st.success("UGENE-style Consensus Generated")
+            st.success(f"{consensus_method} Consensus Generated")
             st.code(consensus, language="text")
 
             consensus_bytes = BytesIO(consensus.encode("utf-8"))
