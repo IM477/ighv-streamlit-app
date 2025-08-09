@@ -282,6 +282,7 @@ if cap3_input_file:
 # ------------------------
 
 st.header("2. IGHV DOCX Report Generator")
+st.markdown("[Downstream analysis](https://www.ncbi.nlm.nih.gov/igblast/)")
 
 pdf_file = st.file_uploader("PDF file (IgBLAST results)", type="pdf")
 docx_template_file = st.file_uploader("Word Template (.docx)", type="docx")
