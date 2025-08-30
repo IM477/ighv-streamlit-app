@@ -162,12 +162,33 @@ def generate_docx_report(gene_names_list, percent_identity_str, ratio_str, templ
     mutation_percent = round(100 - percent_identity, 1)
     mutation_percent_str = f"{mutation_percent}%"
 
-    if any("3-21" in g for g in gene_names_list):
+    if any("3-21*02" in g for g in gene_names_list):
         prognosis_text = (
             "BAD\n"
-            "Note: CLL expressing the IGHV 3-21 variable region gene segment "
-            "have a poorer prognosis regardless of IGHV mutation status."
+            #"Note: CLL expressing the IGHV 3-21 variable region gene segment "
+            #"have a poorer prognosis regardless of IGHV mutation status."
+            "Note: Only IGHV3-21 CLL cases belonging to subset "
+            "#2 carry a uniformly poor prognosis, whereas "
+            "non–subset #2 cases follow outcomes similar to other "
+            "CLL depending on mutation status. "
         )
+        prognosis_single_line = prognosis_text
+    elif any("3-21" in g for g in gene_names_list) and not any("3-21*02" in g for g in gene_names_list):
+        # 3-21 present, but NOT 3-21*02 → mutation-based, then add note
+        if mutation_percent <= 2.0:
+            prognosis_base = "BAD"
+        elif 2.1 <= mutation_percent <= 3.0:
+            prognosis_base = "Borderline with intermediate clinical course"
+        else:
+            prognosis_base = "GOOD"
+
+        note_text = (
+            "Note: Only IGHV3-21 CLL cases belonging to subset "
+            "#2 carry a uniformly poor prognosis, whereas "
+            "non–subset #2 cases follow outcomes similar to other "
+            "CLL depending on mutation status. "
+        )
+        prognosis_text = prognosis_base + "\n" + note_text
         prognosis_single_line = prognosis_text
     else:
         if mutation_percent <= 2.0:
@@ -307,10 +328,17 @@ if st.button("Generate IGHV Report"):
         st.write("Ratio:", ratio_str)
 
         if gene_names_list and percent_identity_str and ratio_str:
+            # docx_bytes = generate_docx_report(
+            #     gene_names_list=gene_names_list,
+            #     percent_identity_str=percent_identity_str,
+            #     ratio_str=ratio_str,
+            #     template_bytes=docx_template_file.read(),
+            #     sample_id_text=final_name
+            # )
             docx_bytes = generate_docx_report(
-                gene_names_list=gene_names_list,
-                percent_identity_str=percent_identity_str,
-                ratio_str=ratio_str,
+                gene_names_list="IGHV4-3-21*02",
+                percent_identity_str= "91.3",
+                ratio_str="147/161",
                 template_bytes=docx_template_file.read(),
                 sample_id_text=final_name
             )
