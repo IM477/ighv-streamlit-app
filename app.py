@@ -336,7 +336,7 @@ if st.button("Generate IGHV Report"):
             #     sample_id_text=final_name
             # )
             docx_bytes = generate_docx_report(
-                gene_names_list=["IGHV4-3-21*02"],
+                gene_names_list=["IGHV4-3-21*08"],
                 percent_identity_str= "91.3",
                 ratio_str="147/161",
                 template_bytes=docx_template_file.read(),
