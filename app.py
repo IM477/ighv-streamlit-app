@@ -328,20 +328,20 @@ if st.button("Generate IGHV Report"):
         st.write("Ratio:", ratio_str)
 
         if gene_names_list and percent_identity_str and ratio_str:
-            # docx_bytes = generate_docx_report(
-            #     gene_names_list=gene_names_list,
-            #     percent_identity_str=percent_identity_str,
-            #     ratio_str=ratio_str,
-            #     template_bytes=docx_template_file.read(),
-            #     sample_id_text=final_name
-            # )
             docx_bytes = generate_docx_report(
-                gene_names_list=["IGHV4-3-21*08"],
-                percent_identity_str= "91.3",
-                ratio_str="147/161",
+                gene_names_list=gene_names_list,
+                percent_identity_str=percent_identity_str,
+                ratio_str=ratio_str,
                 template_bytes=docx_template_file.read(),
                 sample_id_text=final_name
             )
+            # docx_bytes = generate_docx_report(
+            #     gene_names_list=["IGHV4-3-21*08"],
+            #     percent_identity_str= "91.3",
+            #     ratio_str="147/161",
+            #     template_bytes=docx_template_file.read(),
+            #     sample_id_text=final_name
+            # )
 
             st.download_button(
                 label="Download Report",
